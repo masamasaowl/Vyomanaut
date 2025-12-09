@@ -3,6 +3,7 @@ import { deviceController } from '../../modules/devices/device.controller';
 
 /**
  * Device Routes
+ * Count : 6
  * 
  * Maps URLs to controller methods
  * Think of this as a "directory" or "map" of available endpoints

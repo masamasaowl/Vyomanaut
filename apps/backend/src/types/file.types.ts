@@ -140,6 +140,11 @@ export interface FileProcessingResult {
     sizeBytes: number;
     checksum: string;
     encryptedData: Buffer;
+    
+    // Encryption metadata (needed for decryption)
+    iv: string;
+    authTag: string;
+    aad: string;
   }>;
 }
 

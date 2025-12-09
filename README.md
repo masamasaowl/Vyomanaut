@@ -1,6 +1,6 @@
 # Vyomanaut🚀
 
-> The Problem: Data centres consume 2% of global electricity and are expanding rapidly. Meanwhile, billions of devices sit idle with unused storage.
+> The Problem: Data centres consume 1-3% of global electricity and are expanding rapidly & advancements in AI are all set to increase these figures. Meanwhile, billions of devices sit idle with unused storage.
 > 
 
 So..
@@ -45,7 +45,7 @@ A little less strain on the environment
     **A:** "Companies pay $3/TB, we pay users $1.50/TB, we keep $1.50/TB. At 10,000TB stored, that's $15K/month revenue."
 
 
-    Tech Stack:
+   # Tech Stack:
 
     - Backend: Node.js + TypeScript + Express + Socket.io
     - Database: PostgreSQL + Prisma ORM + Redis (Caching) + Bull

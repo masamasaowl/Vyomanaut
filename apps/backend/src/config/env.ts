@@ -96,6 +96,7 @@ export const config = {
 
   fileProcessing: {
     chunkSizeBytes: env.CHUNK_SIZE_MB * 1024 * 1024, // Convert to bytes
+    // The number of copies that need to be distributed
     redundancyFactor: env.REDUNDANCY_FACTOR,
     maxFileSizeBytes: env.MAX_FILE_SIZE_GB * 1024 * 1024 * 1024,
   },

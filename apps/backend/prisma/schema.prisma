@@ -107,8 +107,8 @@ model File {
   companyId String // Who uploaded this
   
   // Encryption
-  encryptionKey String // AES key (encrypted with master key in production)
-  // ensure no tampering happened
+  encryptionKey String // Wrapped DEK (safe to store!)
+  dekId         String // DEK identifier
   checksum      String // SHA-256 of original file
   
   // What we did with your file
@@ -151,6 +151,11 @@ model Chunk {
   sizeBytes    Int
   // No tampering assured
   checksum     String // SHA-256 for integrity check
+  
+  // Encryption metadata (needed to decrypt)
+  iv           String // Hex-encoded IV
+  authTag      String // Hex-encoded auth tag
+  aad          String // Hex-encoded AAD
   
   // How is it doing
   status          ChunkStatus @default(PENDING)

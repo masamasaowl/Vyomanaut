@@ -162,7 +162,8 @@ class ChunkingService {
       // depend on smaller value
       const currentChunkSize = Math.min(this.chunkSize, remainingBytes);
       
-      // Cut the slice (make a subarray)
+      // Cut the slice 
+      // make a subarray() instead of slice() as it saves space by referencing the same buffer
       const chunk = fileBuffer.subarray(offset, offset + currentChunkSize);
       chunks.push(chunk);
       
