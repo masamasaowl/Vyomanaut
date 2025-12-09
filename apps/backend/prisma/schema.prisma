@@ -1,0 +1,268 @@
+// Prisma Schema for Vyomanaut
+// This is our source of truth for the database structure
+
+// Contains 7 models
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ========================================
+// DEVICE MANAGEMENT
+// ========================================
+
+enum DeviceStatus {
+  ONLINE
+  OFFLINE
+  SUSPENDED // User paused earning, or we detected issues
+}
+
+enum DeviceType {
+  ANDROID
+  IOS
+  DESKTOP
+  MACOS
+  LINUX
+}
+
+
+// ================== Device ==================
+// Tracks each contributor's device
+model Device {
+
+  // As soon as you register 
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Device Identification
+  deviceId     String     @unique // From mobile app (Android ID, etc.)
+  deviceType   DeviceType
+  
+
+  // Relation with User ( one to many )
+  userId    String
+  user      User     @relation(fields:[userId], references:[id], onDelete: Cascade)
+  
+  // Device Specs
+  totalStorageBytes     BigInt // How much they allocated
+  availableStorageBytes BigInt // Currently free
+  
+  // The Whatsapp check
+  status        DeviceStatus @default(OFFLINE)
+  lastSeenAt    DateTime     @default(now())
+  ipAddress     String?
+  
+
+  // Their performance
+  // 0-100, decreases with downtime
+  reliabilityScore Float   @default(100.0) 
+  // in Milliseconds
+  totalUptime      BigInt  @default(0) 
+  totalDowntime    BigInt  @default(0)
+  
+  // Do they earn 
+  totalEarnings Decimal @default(0) @db.Decimal(10, 6)
+
+  // Where is my chunk (one to many)
+  chunks ChunkLocation[]
+  
+  // Speed up the query
+  @@index([status])
+  @@index([userId])
+  @@index([reliabilityScore])
+}
+
+// ========================================
+// FILE MANAGEMENT
+// ========================================
+
+enum FileStatus {
+  UPLOADING    // Currently being chunked and distributed
+  ACTIVE       // Fully replicated and available
+  DEGRADED     // Some chunks lost, below redundancy target
+  DELETED      // Marked for deletion
+}
+
+
+// ================== File ==================
+model File {
+
+  // Did you upload your file
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // File Information
+  originalName String
+  mimeType     String
+  sizeBytes    BigInt
+  
+  // Ownership
+  companyId String // Who uploaded this
+  
+  // Encryption
+  encryptionKey String // AES key (encrypted with master key in production)
+  // ensure no tampering happened
+  checksum      String // SHA-256 of original file
+  
+  // What we did with your file
+  status       FileStatus @default(UPLOADING)
+  // How many chunks
+  chunkCount   Int
+  
+  // All the chunks (one to many: one file many chunks)
+  chunks Chunk[]
+  
+  @@index([companyId])
+  @@index([status])
+}
+
+
+// ========================================
+// CHUNK MANAGEMENT
+// ========================================
+
+enum ChunkStatus {
+  PENDING      // Created but not yet distributed
+  REPLICATING  // Being copied to devices
+  HEALTHY      // Has >= redundancy factor copies
+  DEGRADED     // Below redundancy factor
+  LOST         // All copies gone
+}
+
+
+// ================== Chunk ==================
+model Chunk {
+
+  // When we create a single chunk
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Identify the chunk
+  fileId       String
+  sequenceNum  Int    // 0, 1, 2... for reassembly order
+  sizeBytes    Int
+  // No tampering assured
+  checksum     String // SHA-256 for integrity check
+  
+  // How is it doing
+  status          ChunkStatus @default(PENDING)
+  // How many copies exist 
+  currentReplicas Int         @default(0)
+  targetReplicas  Int         @default(3)
+  
+  // Relations
+  // Who are you a chunk of
+  file      File            @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  // Which device are you stored on
+  locations ChunkLocation[]
+  
+  @@unique([fileId, sequenceNum])
+  @@index([status])
+  @@index([fileId])
+}
+
+// ========================================
+// CHUNK-DEVICE MAPPING (The Critical Registry!)
+// ========================================
+
+
+// ================== ChunkLocation =================
+model ChunkLocation {
+
+  // So our little chunk went somewhere
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Who was that chunk
+  chunkId  String
+  // And where is that chunk
+  deviceId String
+  
+  // Where are you stored inside the device
+  localPath String // e.g., "/storage/chunks/abc123.enc"
+  
+  // Verification
+  lastVerified DateTime? // When we last confirmed chunky existed
+  // Is he doing good
+  isHealthy    Boolean   @default(true)
+  
+
+  // Relations
+  // Where did you come from
+  chunk  Chunk  @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+  // Where did you go
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  
+  @@unique([chunkId, deviceId]) // A chunk can only be on a device once
+  @@index([deviceId])
+  @@index([chunkId])
+}
+
+// ========================================
+// ANALYTICS & MONITORING
+// ========================================
+
+// ================== DeviceMetric ==================
+model DeviceMetric {
+  // How is the device doing
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  // Which device is it again
+  deviceId String
+  
+  // Snapshot metrics (recorded every hour)
+  // You are being watched
+  storageUsedBytes BigInt
+  chunksStored     Int
+  uptime           Boolean
+  
+  @@index([deviceId, createdAt])
+}
+
+
+
+// ================== SystemMetric ==================
+
+model SystemMetric {
+  // How are we doing (Per Server)
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  // Platform-wide metrics
+  // How many devices registered
+  totalDevices       Int
+  // How many are up
+  devicesOnline      Int
+  // How much can we hold in
+  totalStorageBytes  BigInt
+  // How much divisions are stored
+  totalChunks        Int
+  // How many files do we store
+  totalFiles         Int
+  
+  @@index([createdAt])
+}
+
+
+// ================== User ==================
+
+model User{
+  // A new user registers
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+
+  // How many devices have you put to the task
+  devices   Device[]
+}

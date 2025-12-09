@@ -1,0 +1,9 @@
+{
+  "name": "@vyomanaut/shared",
+  "version": "0.1.0",
+  "main": "./types/index.ts",
+  "types": "./types/index.ts",
+  "dependencies": {
+    "typescript": "^5.5.0"
+  }
+}
