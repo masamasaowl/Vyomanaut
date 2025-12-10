@@ -221,7 +221,44 @@ export function setupDeviceEvents(socket: Socket): void {
       console.error('❌ Error handling disconnect:', error);
     }
   });
+
+
+  // ========================================
+  // EVENT 5: 📦Chunk Assignment Confirmation  
+  // ========================================
+  /**
+   * Device confirms it successfully stored a chunk
+   * 
+   * Flow:
+   * 1. Server sends chunk → Device stores it
+   * 2. Device confirms → Server updates database
+   */
+  socket.on('chunk:confirm', async (payload: { chunkId: string; success: boolean; error?: string }) => {
+    try {
+      const deviceId = socket.data.deviceId;
+      
+      if (!deviceId) {
+        console.warn('⚠️ Chunk confirmation from unregistered device');
+        return;
+      }
+      
+      if (payload.success) {
+        console.log(`✅ Device ${deviceId} confirmed chunk ${payload.chunkId}`);
+        // Confirmation handling is done in distribution service via socket.once()
+      } else {
+        console.error(`❌ Device ${deviceId} failed to store chunk ${payload.chunkId}: ${payload.error}`);
+      }
+      
+    } catch (error) {
+      console.error('❌ Error handling chunk confirmation:', error);
+    }
+  });
 }
+
+
+  // ========================================
+  // HELPERS    
+  // ========================================
 
 /**
  * Helper: Get device ID from socket

@@ -205,6 +205,7 @@ model ChunkLocation {
   // Relations
   // Where did you come from
   chunk  Chunk  @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+  
   // Where did you go
   device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
   

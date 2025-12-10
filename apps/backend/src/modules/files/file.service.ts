@@ -2,6 +2,7 @@ import { prisma } from '../../config/database';
 import { FileStatus, ChunkStatus } from '@prisma/client';
 import { chunkingService } from './chunking.service';
 import { FileData, ChunkData, FileQueryFilters } from '../../types/file.types';
+import { chunkDistributionService } from '../chunks/distribution.service';
 
 /**
  * File Service
@@ -111,9 +112,22 @@ class FileService {
       
       console.log(`✅ Upload complete: ${file.id} (${result.chunks.length} chunks)`);
       
-      // Step 7: TODO - Trigger chunk distribution to devices
-      // We'll implement this in the next feature
+
+      // Step 7: Trigger chunk distribution to devices 
+      // This must not hinder the accepting the file,chunking it, saving chunks to DB
+      // After they happen we send response -> upload complete 
+      // Then we start with distribution
+      // setImmediate() -> Do it right after this
+      // if we used just await then the uploadFile API would become slow
+      setImmediate(async () => {
+        try {
+          await chunkDistributionService.distributeFileChunks(file.id);
+        } catch (error) {
+          console.error(`❌ Failed to distribute chunks for file ${file.id}:`, error);
+        }
+      });
       
+
       return this.convertToFileData(
         await prisma.file.findUnique({ where: { id: file.id } })
       );

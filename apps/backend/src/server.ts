@@ -7,6 +7,7 @@ import { config } from './config/env';
 import { prisma, disconnectDatabase, checkDatabaseHealth } from './config/database';
 import { redisManager } from './config/redis';
 import { initializeCrypto } from './utils/crypto';
+import { chunkDistributionService } from './modules/chunks/distribution.service';
 
 /**
  * Vyomanaut Backend Server
@@ -151,6 +152,12 @@ class VyomonautServer {
   private setupWebSocket(): void {
     // Import device events handler
     const { setupDeviceEvents } = require('./websocket/device.events');
+    
+
+    // Initialize chunk distribution service with Socket.io instance
+    // hand the walkie-talkie to all connected devices
+    chunkDistributionService.setSocketIO(this.io);
+
 
     this.io.on('connection', (socket) => {
       console.log(`🔌 New connection: ${socket.id}`);
