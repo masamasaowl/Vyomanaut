@@ -158,6 +158,7 @@ class ChunkDistributionService {
    * Send chunk to a specific device
    * he is the actual delivery boy 
    * 
+   * 
    * @param deviceId - Database ID of device
    * @param chunkId - Chunk ID
    * @param metadata - Chunk metadata
@@ -211,15 +212,19 @@ class ChunkDistributionService {
       
 
       // Send chunk to it
+      // chunk:assign -> is the event that would be recognized by the client websocket
+      // The chunkId and metadata goes via payload
       socket.emit('chunk:assign', {
         chunkId,
         ...metadata,
         // In production, we include: encryptedData (as base64 or binary)
+        // Not now as: 
       });
 
       
       // Wait for confirmation from device
-      // We listen for it only once 
+      // We listen for it only once
+      // chunk:confirm:${chunkId} -> Is the event which is emitted by device and received by us
       socket.once(`chunk:confirm:${chunkId}`, async (response: { success: boolean }) => {
 
         // response delivered
