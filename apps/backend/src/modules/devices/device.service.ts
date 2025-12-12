@@ -45,7 +45,6 @@ import {
  */
 
 class DeviceService {
-  
 
 // ========================================
 // 1. 👶 Register a new device
@@ -73,10 +72,11 @@ class DeviceService {
     const existingDevice = await prisma.device.findUnique({
       where: { deviceId },
     });
-    
+
     // offline check
     const wasOffline = existingDevice?.status === DeviceStatus.OFFLINE;
 
+    // If device was offline, calculate how long (for 🌅 Awakening)
     // add to downtime 
     let additionalDowntime = BigInt(0);
 
@@ -92,53 +92,54 @@ class DeviceService {
     // upsert -> update or insert new
     const device = await prisma.device.upsert({
 
-        // Try to find existing device
-        where: { deviceId },
-
-        // If found then update it's data 
-        update: {
-            status: DeviceStatus.ONLINE,
-            lastSeenAt: new Date(),
-            totalStorageBytes: BigInt(totalStorageBytes),
-            availableStorageBytes: BigInt(totalStorageBytes),
-
-            // 🌅 AWAKENING: Add downtime since it went offline
-            totalDowntime: wasOffline && existingDevice
-              ? existingDevice.totalDowntime + additionalDowntime
-              : undefined,
-
-            // Reliability score would change when he comes back again
-            reliabilityScore: wasOffline && existingDevice
+      // Try to find existing device
+      where: { deviceId },
+      
+      // If found then update it's data 
+      update: {
+        status: DeviceStatus.ONLINE,
+        lastSeenAt: new Date(),
+        totalStorageBytes: BigInt(totalStorageBytes),
+        availableStorageBytes: BigInt(totalStorageBytes),
+        
+        // 🌅 AWAKENING: Add downtime since it went offline
+        totalDowntime: wasOffline && existingDevice
+          ? existingDevice.totalDowntime + additionalDowntime
+          : undefined,
+        
+        // Reliability score would change when he comes back again
+        reliabilityScore: wasOffline && existingDevice
           ? this.calculateReliabilityScore(
 
               // this function is will return just that
               existingDevice.totalUptime,
               existingDevice.totalDowntime + additionalDowntime
             )
-          : undefined,  
-        },
-
-        // If not found
-        // Brand new device! Welcome aboard
-        create: {
-            deviceId,
-            deviceType,
-            userId,
-            totalStorageBytes: BigInt(totalStorageBytes),
-            availableStorageBytes: BigInt(totalStorageBytes),
-            status: DeviceStatus.ONLINE,
-            lastSeenAt: new Date(),
-            reliabilityScore: 100.0, // Start with perfect score
-            totalUptime: BigInt(0),
-            totalDowntime: BigInt(0),
-            totalEarnings: 0
-        }
+          : undefined,
+      },
+      
+      // If not found
+      // Brand new device! Welcome aboard
+      create: {
+        deviceId,
+        deviceType,
+        userId,
+        totalStorageBytes: BigInt(totalStorageBytes),
+        availableStorageBytes: BigInt(totalStorageBytes),
+        status: DeviceStatus.ONLINE,
+        lastSeenAt: new Date(),
+        // Start with perfect score
+        reliabilityScore: 100.0,
+        totalUptime: BigInt(0),
+        totalDowntime: BigInt(0),
+        totalEarnings: 0,
+      },
     });
 
     // A lovely tweak
     // Cache the status in Redis for fast lookups
     await cacheDeviceStatus(deviceId, DeviceStatus.ONLINE);
-    
+
     // Update sorted set of online devices
     // from redis.ts
     await updateDeviceLastSeen(deviceId);
@@ -147,7 +148,7 @@ class DeviceService {
     if (wasOffline) {
       console.log(`🌅 Device awakened: ${deviceId} (was offline for ${(Number(additionalDowntime) / 1000 / 60).toFixed(2)} minutes)`);
     } else if (existingDevice) {
-      console.log(`Device reconnected: ${deviceId}`);
+      console.log(`🔄 Device reconnected: ${deviceId}`);
     } else {
       console.log(`👶 New device born: ${deviceId}`);
     }
@@ -158,9 +159,9 @@ class DeviceService {
 
 
 
-// ========================================
-// 2. 💓 Ping the device
-// ========================================
+  // ========================================
+  // 2. 💓 LIFE - Handle Heartbeats
+  // ========================================
 
   /**
    * Update device's heartbeat (called every 60 seconds)
@@ -201,12 +202,12 @@ class DeviceService {
         availableStorageBytes: BigInt(availableStorageBytes),
         status: DeviceStatus.ONLINE,
         
-        // Add to uptime (time since last ping)
+        // Add to uptime (device was alive during this period)
         totalUptime: device.totalUptime + BigInt(timeSinceLastSeen),
       },
     });
 
-    // Update cache (Redis you know)
+    // Update cache
     await cacheDeviceStatus(deviceId, DeviceStatus.ONLINE);
     await updateDeviceLastSeen(deviceId);
   }
@@ -232,7 +233,7 @@ class DeviceService {
     });
 
     if (!device) {
-      console.log(`Device not found: ${deviceId}`);
+      console.warn(`⚠️ Tried to mark unknown device offline: ${deviceId}`);
       return;
     }
 
@@ -244,7 +245,7 @@ class DeviceService {
       const now = new Date();
       const lastSeen = device.lastSeenAt;
       const timeSinceLastSeen = now.getTime() - lastSeen.getTime();
-      
+
       // Add to downtime using last seen
       const newTotalDowntime = device.totalDowntime + BigInt(timeSinceLastSeen);
 
@@ -269,13 +270,13 @@ class DeviceService {
       // Update cache
       await cacheDeviceStatus(deviceId, DeviceStatus.OFFLINE);
 
-      console.log(`📴 Device went offline: ${deviceId}`);
+      console.log(`😴 Device fell asleep: ${deviceId}`);
     }
   }
 
 
   // ========================================
-  // 4. 👋 BYE - Suspend Device
+  // 4. 👋 BYE - Suspend Device (New!)
   // ========================================
 
   /**
@@ -314,7 +315,7 @@ class DeviceService {
 
     // It's a goodbye my friend
     await prisma.device.update({
-      where: { deviceId },
+      where: { id: device.id }, // FIX: Use id, not deviceId
       data: {
         // 👋 BYE
         status: DeviceStatus.SUSPENDED,
@@ -339,7 +340,7 @@ class DeviceService {
 
 
   // ========================================
-  // 5. 📊 Reliability Score Calculator 
+  // 5. 📊 Reliability Score Calculator
   // ========================================
 
   /**
@@ -347,7 +348,7 @@ class DeviceService {
    * 
    * Formula:
    * - Base score = (uptime / total_time) * 100
-   * - Penalty for long consecutive downtimes
+   * - Clamped between 0 and 100
    * 
    * Examples:
    * - 95% uptime = 95 score
@@ -372,9 +373,10 @@ class DeviceService {
     // How long were you On
     const uptimePercentage = (Number(totalUptime) / totalTime) * 100;
     
+
     // Score is simply uptime percentage
-    // We'll improve it later
-    return Math.max(0, Math.min(100, uptimePercentage));
+    // Clamp between 0 and 100
+    return Math.max(0, Math.min(100, Math.round(uptimePercentage * 100) / 100));
   }
 
 
@@ -392,6 +394,7 @@ class DeviceService {
    * - Reliability score (0-100, decreases with downtime)
    * - How long it's been offline (if offline)
    */
+
   async getDeviceHealth(deviceId: string): Promise<DeviceHealth> {
 
     // Check a particular device
@@ -443,6 +446,7 @@ class DeviceService {
    * - Has available storage
    * - Sorted by reliability (best first)
    */
+
   async findHealthyDevices(
     minAvailableStorageBytes: number,
     minReliabilityScore: number = 70,
@@ -480,10 +484,10 @@ class DeviceService {
     }));
   }
 
-
   // ========================================
   // 8. Get Device
   // ========================================
+
   async getDevice(deviceId: string): Promise<DeviceData | null> {
     const device = await prisma.device.findUnique({
       where: { deviceId },
@@ -496,6 +500,7 @@ class DeviceService {
   // ========================================
   // 9. To find those few perfect devices
   // ========================================
+
   async listDevices(filters: DeviceQueryFilters = {}): Promise<DeviceSummary[]> {
 
     // find them
@@ -541,12 +546,12 @@ class DeviceService {
    */
   private convertToDeviceData(device: any): DeviceData {
     return {
-        ...device,
-        totalStorageBytes: Number(device.totalStorageBytes),
-        availableStorageBytes: Number(device.availableStorageBytes),
-        totalUptime: Number(device.totalUptime),
-        totalDowntime: Number(device.totalDowntime),
-        totalEarnings: Number(device.totalEarnings)
+      ...device,
+      totalStorageBytes: Number(device.totalStorageBytes),
+      availableStorageBytes: Number(device.availableStorageBytes),
+      totalUptime: Number(device.totalUptime),
+      totalDowntime: Number(device.totalDowntime),
+      totalEarnings: Number(device.totalEarnings),
     };
   }
 }

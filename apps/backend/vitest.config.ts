@@ -10,6 +10,10 @@ export default defineConfig({
     environment: 'node',
     // run this before startup
     setupFiles: ['./tests/setup.ts'],
+    env: {
+      // We create separate env var for testing to avoid errors
+      NODE_ENV: 'test',
+    },
     coverage: {
       provider: 'v8',
       // reply in these formats

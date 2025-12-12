@@ -2,6 +2,7 @@ import { beforeAll, afterAll, afterEach } from 'vitest';
 import { prisma } from '../src/config/database';
 import { redisManager } from '../src/config/redis';
 import { initializeCrypto } from '../src/utils/crypto';
+import { execSync } from 'child_process';
 
 /**
  * Test Setup
@@ -18,6 +19,14 @@ import { initializeCrypto } from '../src/utils/crypto';
 
 // Do this once before all tests start
 beforeAll(async () => {
+
+  // Run migrations to ensure schema is up to date
+  console.log('🔄 Running database migrations...');
+  try {
+    execSync('npx prisma migrate deploy', { stdio: 'inherit' });
+  } catch (error) {
+    console.warn('⚠️ Migration failed (might already be applied)');
+  }
 
   // a fake test key we’ll use during tests.
   const testKEK = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';

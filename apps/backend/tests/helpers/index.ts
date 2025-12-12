@@ -104,3 +104,6 @@ export const TIME = {
   MINUTES: (n: number) => n * 60 * 1000,
   HOURS: (n: number) => n * 60 * 60 * 1000,
 };
+
+// Re-export file helpers to use everywhere
+export * from './fileHelper';

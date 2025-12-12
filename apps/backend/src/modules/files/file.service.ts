@@ -44,7 +44,7 @@ class FileService {
     }
     
     // What are we uploading
-    console.log(`📤 Starting upload: ${originalName} (${(fileBuffer.length / 1024 / 1024).toFixed(2)}MB)`);
+    console.log(`📤 Starting upload: ${originalName} (${(fileBuffer.length / 1024 / 1024).toFixed(2)}MB)`); 
     
     // Step 2: Create File record (status: UPLOADING)
     // So if it fails later we would know where it failed

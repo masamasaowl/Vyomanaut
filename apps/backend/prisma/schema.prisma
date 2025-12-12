@@ -44,11 +44,8 @@ model Device {
   deviceId     String     @unique // From mobile app (Android ID, etc.)
   deviceType   DeviceType
   
+  userId       String // Link to user
 
-  // Relation with User ( one to many )
-  userId    String
-  user      User     @relation(fields:[userId], references:[id], onDelete: Cascade)
-  
   // Device Specs
   totalStorageBytes     BigInt // How much they allocated
   availableStorageBytes BigInt // Currently free
@@ -74,7 +71,6 @@ model Device {
   
   // Speed up the query
   @@index([status])
-  @@index([userId])
   @@index([reliabilityScore])
 }
 
@@ -261,14 +257,3 @@ model SystemMetric {
 }
 
 
-// ================== User ==================
-
-model User{
-  // A new user registers
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-
-  // How many devices have you put to the task
-  devices   Device[]
-}
