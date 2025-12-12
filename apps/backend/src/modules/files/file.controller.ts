@@ -73,6 +73,39 @@ class FileController {
     }
   }
 
+  /**
+   * @desc    Download a file
+   * @route   GET /api/v1/files/:fileId/download
+   * 
+   * Returns the actual file as binary data
+   */
+  async downloadFile(req: Request, res: Response): Promise<void> {
+    try {
+      const { fileId } = req.params;
+      
+      console.log(`⬇️ Download request for file ${fileId}`);
+      
+      const result = await fileService.downloadFile(fileId);
+      
+      // Set headers for file download
+      res.setHeader('Content-Type', result.mimeType);
+      res.setHeader('Content-Disposition', `attachment; filename="${result.fileName}"`);
+      res.setHeader('Content-Length', result.fileBuffer.length);
+      
+      // Send file
+      res.send(result.fileBuffer);
+      
+      console.log(`✅ Download sent: ${result.fileName}`);
+      
+    } catch (error) {
+      console.error('❌ Error downloading file:', error);
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to download file',
+      });
+    }
+  }
+
 
   /**
    * @desc    List all files with filters

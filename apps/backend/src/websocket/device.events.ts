@@ -253,6 +253,24 @@ export function setupDeviceEvents(socket: Socket): void {
       console.error('❌ Error handling chunk confirmation:', error);
     }
   });
+
+
+
+  // ========================================
+  // EVENT 6: 📤Chunk Retrieval Request   
+  // ========================================
+
+  /**
+   * Server requests a chunk from device
+   * Device sends the chunk data back
+   * 
+   * Flow:
+   * 1. Server sends chunk:request → Device reads from local storage
+   * 2. Device sends chunk:data → Server receives encrypted chunk
+   */
+  // Note: This event is handled by the device, not the server
+  // Server emits 'chunk:request', device responds with 'chunk:data'
+  // No handler needed here - it's in the retrieval service
 }
 
 

@@ -24,6 +24,12 @@ router.post(
 );
 
 /**
+ * GET /api/v1/files/:fileId/download
+ * Download a file (returns binary data)
+ */
+router.get('/:fileId/download', (req, res) => fileController.downloadFile(req, res));
+
+/**
  * GET /api/v1/files/stats
  * Get file statistics
  */

@@ -3,6 +3,7 @@ import { FileStatus, ChunkStatus } from '@prisma/client';
 import { chunkingService } from './chunking.service';
 import { FileData, ChunkData, FileQueryFilters } from '../../types/file.types';
 import { chunkDistributionService } from '../chunks/distribution.service';
+import { chunkRetrievalService } from '../chunks/retrieval.service';
 
 /**
  * File Service
@@ -144,6 +145,69 @@ class FileService {
     }
   }
 
+
+  // ========================================
+  // 📥 File Retrieval
+  // ========================================
+   /**
+   * Download a file by it's fileId sent by company request
+   * 
+   * Flow:
+   * 1. Check file exists and is ACTIVE
+   * 2. Check all chunks are available
+   * 3. Retrieve chunks from devices
+   * 4. Reassemble and decrypt
+   * 5. Return original file
+   * 
+   * @param fileId - File to download
+   * @returns Original file buffer and metadata
+   */
+  async downloadFile(fileId: string): Promise<{
+    fileBuffer: Buffer;
+    fileName: string;
+    mimeType: string;
+  }> {
+    
+    console.log(`⬇️ Download requested for file ${fileId}`);
+    
+    // Step 1: Get file metadata
+    const file = await prisma.file.findUnique({
+      where: { id: fileId },
+    });
+    
+    if (!file) {
+      throw new Error(`File ${fileId} not found`);
+    }
+    
+    // If the file had faced an issue earlier
+    if (file.status !== FileStatus.ACTIVE) {
+      throw new Error(`File is not available (status: ${file.status})`);
+    }
+    
+    // Step 2: Check chunk availability
+    const availability = await chunkRetrievalService.checkFileAvailability(fileId);
+    
+    // We won't be able to serve you at the moment
+    if (!availability.available) {
+      throw new Error(
+        `File is not fully available. Missing chunks: ${availability.missingChunks.join(', ')}`
+      );
+    }
+    
+    console.log(`  ✅ All ${availability.totalChunks} chunks available`);
+    
+    // Step 3: Retrieve and reassemble file
+    const fileBuffer = await chunkRetrievalService.retrieveFile(fileId);
+    
+    console.log(`✅ Download complete: ${file.originalName} (${(fileBuffer.length / 1024 / 1024).toFixed(2)}MB)`);
+    
+    // It was an honor to serve you, Happy Exploring☺️
+    return {
+      fileBuffer,
+      fileName: file.originalName,
+      mimeType: file.mimeType,
+    };
+  }
 
 
   // ========================================

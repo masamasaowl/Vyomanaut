@@ -8,6 +8,7 @@ import { prisma, disconnectDatabase, checkDatabaseHealth } from './config/databa
 import { redisManager } from './config/redis';
 import { initializeCrypto } from './utils/crypto';
 import { chunkDistributionService } from './modules/chunks/distribution.service';
+import { chunkRetrievalService } from './modules/chunks/retrieval.service';
 
 /**
  * Vyomanaut Backend Server
@@ -157,6 +158,9 @@ class VyomonautServer {
     // Initialize chunk distribution service with Socket.io instance
     // hand the walkie-talkie to all connected devices
     chunkDistributionService.setSocketIO(this.io);
+
+    // This is the Retrieval call for all our Explorers
+    chunkRetrievalService.setSocketIO(this.io);
 
 
     this.io.on('connection', (socket) => {
