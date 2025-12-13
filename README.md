@@ -66,7 +66,7 @@ vyomanaut/
 │   │   ├── src/
 │   │   │   ├── server.ts                 # Entry point
 │   │   │   │
-│   │   │   ├── config/                   # Configure useful resources
+│   │   │   ├── config/                   # Configuration
 │   │   │   │   ├── database.ts           # Prisma client setup
 │   │   │   │   ├── redis.ts              # Redis client
 │   │   │   │   └── env.ts                # Environment variables
@@ -100,9 +100,14 @@ vyomanaut/
 │   │   │   │   │   ├── payment.service.ts
 │   │   │   │   │   └── earnings.calculator.ts
 │   │   │   │   │
-│   │   │   │   └── analytics/            # Analytics & Monitoring
-│   │   │   │       ├── analytics.service.ts
-│   │   │   │       └── metrics.service.ts
+│   │   │   │   ├── analytics/            # Analytics & Monitoring
+│   │   │   │   │   ├── analytics.service.ts
+│   │   │   │   │   └── metrics.service.ts
+│   │   │   │   │
+│   │   │   │   └── auth/                 # NEW: JWT, sessions
+│   │   │   │       ├── auth.controller.ts
+│   │   │   │       ├── auth.service.ts
+│   │   │   │       └── auth.types.ts
 │   │   │   │
 │   │   │   ├── websocket/                # WebSocket Event Hub
 │   │   │   │   ├── socket.handler.ts     # Main Socket.io logic
@@ -116,14 +121,24 @@ vyomanaut/
 │   │   │   │   │   └── analytics.routes.ts
 │   │   │   │   └── middleware/
 │   │   │   │       ├── auth.ts
-│   │   │   │       ├── validate.ts
-│   │   │   │       └── rateLimit.ts
+│   │   │   │       ├── validate.ts        # NEW: Zod
+│   │   │   │       ├── rateLimit.ts
+│   │   │   │       ├── errorHandler.ts    # NEW
+│   │   │   │       └── logger.ts          # NEW
+│   │   │   │
+│   │   │   ├── workers/                   # NEW
+│   │   │   │   ├── healing.worker.ts
+│   │   │   │   ├── metrics.worker.ts
+│   │   │   │   └── cleanup.worker.ts
 │   │   │   │
 │   │   │   ├── utils/                    # Shared utilities
 │   │   │   │   ├── crypto.ts
 │   │   │   │   ├── checksum.ts
-│   │   │   │   ├── logger.ts
+│   │   │   │   ├── logger.ts              # Winston setup
 │   │   │   │   └── validators.ts
+│   │   │   │
+│   │   │   ├── storage/                   # NEW: Temp chunk storage
+│   │   │   │   └── temp/
 │   │   │   │
 │   │   │   └── types/                    # TypeScript types
 │   │   │       ├── device.types.ts
@@ -140,38 +155,84 @@ vyomanaut/
 │   │   │   ├── integration/
 │   │   │   └── e2e/
 │   │   │
+│   │   ├── logs/                         # NEW: Log files
+│   │   ├── docker/                       # NEW: Deployment
+│   │   │   ├── Dockerfile
+│   │   │   └── docker-compose.prod.yml
+│   │   │
 │   │   ├── .env.example
 │   │   ├── package.json
 │   │   └── tsconfig.json
 │   │
 │   ├── dashboard/                        # Next.js company portal
 │   │   ├── app/
+│   │   │   ├── (auth)/            ← Login, signup
+│   │   │   ├── (dashboard)/       ← Main app
+│   │   │   │   ├── files/
+│   │   │   │   ├── devices/
+│   │   │   │   ├── analytics/
+│   │   │   │   └── settings/
+│   │   │   └── api/               ← Next.js API routes
 │   │   ├── components/
-│   │   └── lib/
+│   │   │   ├── ui/                ← shadcn components
+│   │   │   ├── files/
+│   │   │   ├── devices/
+│   │   │   └── charts/
+│   │   ├── lib/
+│   │   │   ├── api.ts             ← Backend API client
+│   │   │   └── auth.ts
+│   │   └── types/
 │   │
-│   └── android/                          # Kotlin mobile app
-│       └── app/
+│   └── mobile/                    ← Rename from android
+│       ├── android/                          # Kotlin mobile app
+│       │   └── app/
+│       └── ios/                   ← Future
 │
 ├── packages/
-│   └── shared/                           # Shared types across apps
-│       ├── types/
-│       │   ├── Device.ts
-│       │   ├── File.ts
-│       │   ├── Chunk.ts
-│       │   └── index.ts
-│       └── package.json
+│   ├── shared/                           # Shared types across apps
+│   │   ├── types/
+│   │   │   ├── Device.ts
+│   │   │   ├── File.ts
+│   │   │   ├── Chunk.ts
+│   │   │   └── index.ts
+│   │   ├── constants/             ← NEW: Shared constants
+│   │   └── validators/            ← NEW: Shared Zod schemas
+│   │   └── package.json
+│   │
+│   └── api-client/                ← NEW: Shared API client
 │
 ├── docs/
+│   ├── api/                       ← NEW: API docs
+│   │   ├── swagger.json
+│   │   └── postman.json
+│   ├── architecture/              ← NEW: Detailed docs
+│   │   ├── data-flow.md
+│   │   ├── security.md
+│   │   └── scaling.md
+│   ├── guides/
+│   │   ├── deployment.md          ← NEW
+│   │   └── development.md
 │   ├── architecture.md
 │   ├── api-reference.md
 │   └── demo-script.md
 │
 ├── scripts/
 │   ├── setup.sh
+│   ├── deploy.sh                  ← NEW
+│   ├── seed/                      ← NEW: Organized seeds
+│   │   ├── devices.ts
+│   │   ├── files.ts
+│   │   └── companies.ts
+│   └── migrations/                ← NEW: Data migrations
 │   └── seed-database.ts
 │
 ├── docker-compose.yml                    # Local dev: PostgreSQL + Redis
 ├── turbo.json
+├── .github/
+│   └── workflows/                 ← NEW: CI/CD
+│       ├── test.yml
+│       ├── deploy-staging.yml
+│       └── deploy-prod.yml
 └── package.json
 ```
 
