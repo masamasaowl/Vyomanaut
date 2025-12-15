@@ -134,7 +134,7 @@ class ChunkRetrievalService {
     
     // Step 6: Verify original checksum
     // There was no changing that took place in that file right
-    const { generateChecksum } = require('@/utils/crypto');
+    const { generateChecksum } = require('../../utils/crypto');
     const actualChecksum = generateChecksum(reassembledFile);
     
     if (actualChecksum !== file.checksum) {

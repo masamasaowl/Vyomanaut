@@ -45,18 +45,64 @@ A little less strain on the environment
     **A:** "Companies pay $3/TB, we pay users $1.50/TB, we keep $1.50/TB. At 10,000TB stored, that's $15K/month revenue."
 
 
-   # Tech Stack:
+# Tech Stack:
 
-    - Backend: Node.js + TypeScript + Express + Socket.io
-    - Database: PostgreSQL + Prisma ORM + Redis (Caching) + Bull
-    - Encryption: NodeJS crypto
-    - Validation: Zod
-    - Mobile: Kotlin (Android only for MVP)
-    - Dashboard: Next.js 15 + TypeScript + Tailwind CSS
-    - Monorepo: Turborepo + pnpm
-    - Containerization: Docker
+- Backend: Node.js + TypeScript + Express + Socket.io
+- Database: PostgreSQL + Prisma ORM + Redis (Caching) + Bull
+- Encryption: NodeJS crypto
+- Validation: Zod
+- Mobile: Kotlin (Android only for MVP)
+- Dashboard: Next.js 15 + TypeScript + Tailwind CSS
+- Monorepo: Turborepo + pnpm
+- Containerization: Docker
 
+# Functional Flow
+```java
+┌─────────────┐
+│   Company   │ Uploads file
+└──────┬──────┘
+       ↓
+┌─────────────────────────────────┐
+│     Backend (Express)           │
+│  - Chunks file (5MB pieces)     │
+│  - Encrypts each chunk          │
+│  - Stores metadata in DB        │
+└──────┬──────────────────────────┘
+       ↓
+┌─────────────────────────────────┐
+│  Assignment Service             │
+│  - Picks 3 best devices         │
+│  - Creates ChunkLocation        │
+└──────┬──────────────────────────┘
+       ↓
+┌─────────────────────────────────┐
+│  Distribution Service           │
+│  - Sends via WebSocket          │
+│  - Waits for confirmation       │
+└──────┬──────────────────────────┘
+       ↓
+┌─────────────────────────────────┐
+│    Devices (3x)                 │
+│  - Receive chunks               │
+│  - Store locally                │
+│  - Confirm receipt              │
+└─────────────────────────────────┘
 
+[Later: Company wants file back]
+
+       ↓
+┌─────────────────────────────────┐
+│  Retrieval Service              │
+│  - Looks up ChunkLocations      │
+│  - Requests from devices        │
+│  - Reassembles file             │
+│  - Verifies checksum            │
+└──────┬──────────────────────────┘
+       ↓
+┌─────────────┐
+│   Company   │ Gets original file back!
+└─────────────┘
+```
 # Repo Structure 
 ```java
 vyomanaut/
@@ -258,15 +304,15 @@ Uber connects riders to drivers and tracks everything
 That's exactly what your backend does for data chunks and devices
 ```
 
-# 🎯 10 Core Functionalities of Backend 
-
-1. Manage Device Lifecycle 
-2. Manage WebSocket Event 
-3. Process Files to chunks and encrypt it 
-4. Store Chunks Locations
-5. Intelligently Assign Chunks
-6. Retrieve the chunks -> turn into files
-7. Automatic Replication & Healing (in case of loss)
-8. Server Health Monitoring
-9.  Calculate Payments
-10. Company API Gateway
+    # 🎯 10 Core Functionalities of Backend 
+    
+    1. Manage Device Lifecycle 
+    2. Manage WebSocket Event 
+    3. Process Files to chunks and encrypt it 
+    4. Store Chunks Locations
+    5. Intelligently Assign Chunks
+    6. Retrieve the chunks -> turn into files
+    7. Automatic Replication & Healing (in case of loss)
+    8. Server Health Monitoring
+    9.  Calculate Payments
+    10. Company API Gateway
