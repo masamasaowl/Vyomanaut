@@ -4,6 +4,7 @@ import { chunkingService } from './chunking.service';
 import { FileData, ChunkData, FileQueryFilters } from '../../types/file.types';
 import { chunkDistributionService } from '../chunks/distribution.service';
 import { chunkRetrievalService } from '../chunks/retrieval.service';
+import { temporaryStorageService } from '../chunks/storage.service';
 
 /**
  * File Service
@@ -24,7 +25,7 @@ class FileService {
    * 1. Validate file size
    * 2. Create File record in DB (status: UPLOADING)
    * 3. Process file (chunk + encrypt)
-   * 4. Create Chunk records in DB
+   * 4. Create Chunk records in DB & store chunk locally for distribution
    * 5. Update File status to ACTIVE
    * 6. Trigger chunk distribution to devices
    * 
@@ -84,10 +85,10 @@ class FileService {
         },
       });
       
-      // Step 5: Create Chunk records
-      // Store metadata of each chunk one by one
-      // This gets stored in the DB of files also
+      // Step 5: Create Chunk records in DB & add chunk to local storage temporarily for distribution 
+      // For every chunk
       for (const chunk of result.chunks) {
+        // Store metadata of chunk in DB
         await prisma.chunk.create({
           data: {
             fileId: file.id,
@@ -102,7 +103,24 @@ class FileService {
             targetReplicas: 3,
           },
         });
+
+        // Store encrypted chunk data temporarily
+        // This is where the actual bytes live until distributed
+        const chunkRecord = await prisma.chunk.findFirst({
+          // look for that stored chunk
+          where: {
+            fileId: file.id,
+            sequenceNum: chunk.sequenceNum,
+          },
+        });
+        
+        // Save it at storage/temp
+        await temporaryStorageService.storeChunk(
+          chunkRecord!.id,
+          chunk.encryptedData
+        );
       }
+      
       
       // Step 6: Update File status to ACTIVE
       // meaning Fully replicated and available

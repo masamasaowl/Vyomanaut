@@ -301,7 +301,7 @@ Think of it like Uber's backend:
 Uber doesn't drive the cars (devices store the data)
 Uber doesn't own the roads (internet is the network)
 Uber connects riders to drivers and tracks everything
-That's exactly what your backend does for data chunks and devices
+That's exactly what our backend does for data chunks and devices
 ```
 
     # 🎯 10 Core Functionalities of Backend 

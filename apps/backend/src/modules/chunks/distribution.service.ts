@@ -1,6 +1,7 @@
 import { Server as SocketIOServer } from 'socket.io';
 import { prisma } from '../../config/database';
 import { chunkAssignmentService } from './assignment.service';
+import { temporaryStorageService } from './storage.service';
 
 /**
  * Chunk Distribution Service
@@ -195,30 +196,32 @@ class ChunkDistributionService {
       throw new Error(`Device ${device.deviceId} not connected`);
     }
     
-    console.log(`  📡 Sending chunk ${chunkId} to device ${device.deviceId}`);
-    
 
-    // Send chunk assignment event
-    // Note: For MVP, we're sending metadata only
-    // In production, we'll also send the encrypted chunk data
+    // Retrieve actual encrypted chunk data from temporary local storage!
+    const encryptedData = await temporaryStorageService.retrieveChunk(chunkId);
+        
+    console.log(`  📡 Sending chunk ${chunkId} to device ${device.deviceId} (${(encryptedData.length / 1024 / 1024).toFixed(2)}MB)`);
+  
+    
+    // Assign chunk to device with actual encrypted data
     // We use a Promise even when func is async as we are tracking webSocket events
     return new Promise((resolve, reject) => {
       
-      
-      // We wait for the device to respond for 30 seconds  
+      // We wait for the device to respond for 60 seconds  
       const timeout = setTimeout(() => {
         reject(new Error(`Timeout waiting for chunk confirmation from ${device.deviceId}`));
-      }, 30000); // 30 second timeout
+      }, 60000); // 60 second increased timeout
       
 
-      // Send chunk to it
+      // Send chunk to the device
       // chunk:assign -> is the event that would be recognized by the client websocket
       // The chunkId and metadata goes via payload
       socket.emit('chunk:assign', {
         chunkId,
         ...metadata,
-        // In production, we include: encryptedData (as base64 or binary)
-        // Not now as: 
+
+        // Send chunk with actual encrypted data (base64 encoded for transport)
+        encryptedData: encryptedData.toString('base64'),
       });
 
       

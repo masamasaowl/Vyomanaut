@@ -252,6 +252,7 @@ class ChunkRetrievalService {
 
   /**
    * Retrieve chunk from a specific device
+   * Update: actual encrypted chunk is now retrieved
    * 
    * @param deviceId - Database ID of device
    * @param chunkId - Chunk to retrieve
@@ -283,10 +284,10 @@ class ChunkRetrievalService {
     // Request chunk from device
     return new Promise((resolve, reject) => {
       
-        // We are less on time, Sorry!
+        // We are less on time, Sorry, only 60 seconds allowed!
       const timeout = setTimeout(() => {
         reject(new Error(`Timeout waiting for chunk from ${device.deviceId}`));
-      }, 30000); // 30 second timeout
+      }, 60000); // 60 second timeout
       
       // Request for chunk
       socket.emit('chunk:request', { chunkId });
@@ -305,6 +306,9 @@ class ChunkRetrievalService {
         if (response.success && response.data) {
           // Decode him, base64 to buffer
           const chunkBuffer = Buffer.from(response.data, 'base64');
+
+          console.log(`  ✅ Received chunk ${chunkId} from device ${device.deviceId} (${(chunkBuffer.length / 1024 / 1024).toFixed(2)}MB)`);
+          
           resolve(chunkBuffer);
 
         // Oops!
