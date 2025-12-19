@@ -11,6 +11,7 @@ import {
   DeviceHealth,
   DeviceQueryFilters,
 } from '../../types/device.types';
+import { healthMonitoringService } from '../replication/health.service';
 
 
 /**
@@ -271,6 +272,18 @@ class DeviceService {
       await cacheDeviceStatus(deviceId, DeviceStatus.OFFLINE);
 
       console.log(`😴 Device fell asleep: ${deviceId}`);
+
+
+      // TRIGGER HEALTH CHECK!
+      // When device goes offline, check which chunks are affected
+      // and queue healing jobs if needed
+      setImmediate(async () => {
+        try {
+          await healthMonitoringService.detectAffectedChunks(device.id);
+        } catch (error) {
+          console.error(`❌ Failed to detect affected chunks for ${deviceId}:`, error);
+        }
+      });
     }
   }
 
@@ -333,6 +346,15 @@ class DeviceService {
     // Update cache
     await cacheDeviceStatus(deviceId, DeviceStatus.SUSPENDED);
 
+
+    // Now let's run healing tasks for all the chunks you had
+    setImmediate(async () => {
+      try {
+        await healthMonitoringService.detectAffectedChunks(device.id);
+      } catch (error) {
+        console.error(`❌ Failed to detect affected chunks for ${deviceId}:`, error);
+      }
+    });
 
     // The reason is important to us 
     console.log(`👋 Device suspended: ${deviceId}${reason ? ` (Reason: ${reason})` : ''}`);

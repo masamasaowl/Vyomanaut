@@ -219,10 +219,11 @@ class ChunkAssignmentService {
    * Re-assign chunk to new device
    * An important feature which acts as a game changer
    * 
+   * - This would run in the background by our healingQueue in /workers/healing.worker.ts
+   * 
    * Used when:
    * - Device goes offline permanently
    * - Chunk falls below redundancy target
-   * - Chunk healing process
    */
   async reassignChunk(chunkId: string): Promise<void> {
 

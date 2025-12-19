@@ -129,7 +129,7 @@ enum ChunkStatus {
   REPLICATING  // Being copied to devices
   HEALTHY      // Has >= redundancy factor copies
   DEGRADED     // Below redundancy factor
-  LOST         // All copies gone
+  LOST         // All copies gone (The most critical error possible)
 }
 
 

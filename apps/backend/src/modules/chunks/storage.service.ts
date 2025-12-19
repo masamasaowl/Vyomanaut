@@ -172,7 +172,7 @@ class TemporaryStorageService {
    * Cleanup old chunks (older than X hours)
    * 
    * Safety mechanism in case distribution fails
-   * Called by background job
+   * He is called by cleanup.worker.ts
    */
   async cleanupOldChunks(olderThanHours: number = 24): Promise<number> {
 

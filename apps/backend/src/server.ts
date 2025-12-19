@@ -9,6 +9,9 @@ import { redisManager } from './config/redis';
 import { initializeCrypto } from './utils/crypto';
 import { chunkDistributionService } from './modules/chunks/distribution.service';
 import { chunkRetrievalService } from './modules/chunks/retrieval.service';
+import { startHealingWorker } from './workers/healing.worker';
+import { healthScheduler } from './workers/healthScheduler';
+import { closeQueues } from './config/queue';
 
 /**
  * Vyomanaut Backend Server
@@ -191,6 +194,14 @@ class VyomonautServer {
         console.log('🔒 WebSocket server closed');
       });
 
+      // Stop background workers
+      if (!config.isDevelopment || process.env.START_WORKERS === 'true') {
+        // Stop scheduling
+        healthScheduler.stop();
+        // Stop creating new queues
+        await closeQueues();
+      }
+
       // Close database & Redis connections
       await disconnectDatabase();
       await redisManager.disconnect();
@@ -222,6 +233,16 @@ class VyomonautServer {
       // Test Redis connection
       await redisManager.getClient();
       console.log('✅ Redis connected');
+
+      // Start background workers (only in production)
+      if (!config.isDevelopment || process.env.START_WORKERS === 'true') {
+        console.log('🦸 Starting background workers...');
+        startHealingWorker();
+        healthScheduler.start();
+        console.log(' Background workers started');
+      } else {
+        console.log('Background workers disabled in development. Set START_WORKERS=true to enable.');
+      }
 
       // Start HTTP server
       this.httpServer.listen(config.server.port, config.server.host, () => {
