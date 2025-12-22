@@ -42,14 +42,13 @@ function createQueue(queueName: string): Queue {
  * 
  * Job types:
  * - 'heal-chunk': Replicate a degraded chunk
- * - 'check-file': Check all chunks of a file
- * - 'cleanup-temp': Clean up temporary storage
  */
 export const healingQueue = createQueue('healing');
 
 
 /**
- * Metrics Queue
+ * Metrics Queue 
+ * ( This is left to be implemented )
  * 
  * Collects and processes analytics data
  * 

@@ -7,7 +7,13 @@ import {
 import { FileProcessingResult } from '../../types/file.types';
 
 /**
- * Chunking Service
+ * IMPROVED Chunking Service with Adaptive Chunk Sizing
+ * 
+ * New Strategy:
+ * - Files ≤ 1GB: No chunking (treat as single chunk)
+ * - 1GB < Files ≤ 5GB: 500MB chunks
+ * - Files > 5GB: 1GB chunks
+ * 
  * 
  * Responsible for:
  * 1. Splitting files into fixed-size chunks
@@ -20,23 +26,84 @@ import { FileProcessingResult } from '../../types/file.types';
 
 class ChunkingService {
   
-    // define chunk size (cannot be changed)
-  private readonly chunkSize: number;
+  // Size thresholds (in bytes)
+  // These are limits after which chunk size changes
+  private readonly NO_CHUNK_THRESHOLD = 1024 * 1024 * 1024; // 1GB
+  private readonly MEDIUM_FILE_THRESHOLD = 5 * 1024 * 1024 * 1024; // 5GB
   
-  // set chunksize from the env 
+  // Chunk sizes for different file sizes
+  // If 1GB < Files ≤ 5GB
+  private readonly MEDIUM_CHUNK_SIZE = 500 * 1024 * 1024; // 500MB
+  // Files > 5GB
+  private readonly LARGE_CHUNK_SIZE = 1024 * 1024 * 1024; // 1GB
+  
+
   // do this only once
   constructor() {
-    // pull from env
-    this.chunkSize = config.fileProcessing.chunkSizeBytes;
 
-    // what size is it 
-    console.log(`🍕 Chunking service initialized (chunk size: ${(this.chunkSize / 1024 / 1024).toFixed(2)}MB)`);
+    console.log(`🍕 Adaptive Chunking Service initialized:
+      ≤1GB files: No chunking
+      1-5GB files: 500MB chunks
+      >5GB files: 1GB chunks
+    `);
+  }
+
+
+  /**
+   * Determine the optimal chunk size for a given file
+   * 
+   * This is our "Pizza slice size decider"
+   * All fetch him when they get a pizza
+   * We write a reasoning for future reference
+   */
+  private determineChunkSize(fileSizeBytes: number): {
+    chunkSize: number;
+    shouldChunk: boolean;
+    reasoning: string;
+  } {
+    
+    // Entire file is the "chunk"
+    if (fileSizeBytes <= this.NO_CHUNK_THRESHOLD) {
+      return {
+        // Chunk = File
+        chunkSize: fileSizeBytes, 
+
+        // Don't chunk
+        shouldChunk: false,
+        reasoning: `File is ${(fileSizeBytes / 1024 / 1024).toFixed(0)}MB, treating as single unit`
+      };
+    }
+    
+    // Less than 5GB
+    if (fileSizeBytes <= this.MEDIUM_FILE_THRESHOLD) {
+      return {
+        // 1 chunk = 500MB
+        chunkSize: this.MEDIUM_CHUNK_SIZE,
+        shouldChunk: true,
+        reasoning: `Medium file (${(fileSizeBytes / 1024 / 1024 / 1024).toFixed(2)}GB), using 500MB chunks`
+      };
+    }
+    
+    // File > 5GB
+    return {
+      // 1 chunk = 1GB
+      chunkSize: this.LARGE_CHUNK_SIZE,
+      shouldChunk: true,
+      reasoning: `Large file (${(fileSizeBytes / 1024 / 1024 / 1024).toFixed(2)}GB), using 1GB chunks`
+    };
   }
 
 
   /**
    * This is a method to 
    * Process a file: chunk it and encrypt each chunk
+   * 
+   * 
+   * NEW BEHAVIOR:
+   * - Small files (≤1GB): Encrypt whole file, send to 3 devices
+   * - Medium files (1-5GB): Split into 500MB chunks
+   * - Large files (>5GB): Split into 1GB chunks
+   * 
    * 
    * Flow:
    * 1. Generate file checksum (original file integrity)
@@ -60,10 +127,15 @@ class ChunkingService {
     fileId: string
   ): Promise<FileProcessingResult> {
     
-    // show which file we are processing with the size 
-    console.log(`Processing file: ${originalName} (${(fileBuffer.length / 1024 / 1024).toFixed(2)}MB)`);
+    // How should we chunk the file
+    const fileSizeBytes = fileBuffer.length;
+    const strategy = this.determineChunkSize(fileSizeBytes);
     
+    // Which file are we working on
+    console.log(`Processing file: ${originalName} (${(fileSizeBytes / 1024 / 1024).toFixed(2)}MB)`);
+    console.log(`  Strategy: ${strategy.reasoning}`);
     
+
     // Step 1: Calculate checksum of ORIGINAL file (before encrypting it)
     // This would help us reassemble it correctly later
     // utils/crypto.ts
@@ -78,9 +150,12 @@ class ChunkingService {
     console.log(`Generated DEK ID: ${dekId}`);
     
   
-    // Step 3: Split file into chunks
-    const chunks = this.splitIntoChunks(fileBuffer);
-    console.log(`Split into ${chunks.length} chunks`);
+    // Step 3: Split into chunks (or treat as single chunk)
+    const chunks = strategy.shouldChunk 
+      ? this.splitIntoChunks(fileBuffer, strategy.chunkSize)
+      : [fileBuffer]; // Entire file is one "chunk"
+    
+    console.log(`  Split into ${chunks.length} chunk(s)`);
     
 
     // Step 4: Encrypt each chunk
@@ -137,16 +212,11 @@ class ChunkingService {
    * Split file buffer into fixed-size chunks
    * pizza cutting logic
    * 
-   * Example:
-   * File: 12MB
-   * Chunk size: 5MB
-   * Result: [5MB, 5MB, 2MB]
-   * 
-   * Like cutting a 12-inch pizza into 5-inch slices!
+   * Like cutting a 12-inch pizza into 5-inch slices
    */
-  private splitIntoChunks(fileBuffer: Buffer): Buffer[] {
+  private splitIntoChunks(fileBuffer: Buffer, chunkSize: number): Buffer[] {
 
-    // create arrays which store Buffers (the chunks)
+    // create arrays which store Buffers (the chunks in binary)
     const chunks: Buffer[] = [];
 
     // Track how many bytes have we cut till now 
@@ -160,7 +230,7 @@ class ChunkingService {
       // (last chunk might be smaller)
       const remainingBytes = fileBuffer.length - offset;
       // depend on smaller value
-      const currentChunkSize = Math.min(this.chunkSize, remainingBytes);
+      const currentChunkSize = Math.min(chunkSize, remainingBytes);
       
       // Cut the slice 
       // make a subarray() instead of slice() as it saves space by referencing the same buffer
@@ -184,14 +254,25 @@ class ChunkingService {
    * Useful for validation before processing
    */
   calculateChunkCount(fileSizeBytes: number): number {
-    return Math.ceil(fileSizeBytes / this.chunkSize);
+    const strategy = this.determineChunkSize(fileSizeBytes);
+    
+    if (!strategy.shouldChunk) {
+      return 1; // No chunking = 1 chunk
+    }
+    
+    return Math.ceil(fileSizeBytes / strategy.chunkSize);
   }
+
 
   /**
    * Validate file size
    * Ensures file isn't too large for our system
+   * 
+   * NEW: Recommend minimum 1GB device storage
    */
   validateFileSize(fileSizeBytes: number): { valid: boolean; error?: string } {
+
+    // Don't exceed
     const maxSize = config.fileProcessing.maxFileSizeBytes;
     
     if (fileSizeBytes === 0) {
@@ -208,6 +289,16 @@ class ChunkingService {
     }
     
     return { valid: true };
+  }
+
+  
+  /**
+   * NEW: Get recommended minimum device storage
+   * 
+   * Since we no longer chunk small files, devices need at least 1GB
+   */
+  getMinimumDeviceStorage(): number {
+    return this.NO_CHUNK_THRESHOLD; // 1GB
   }
 }
 

@@ -5,6 +5,7 @@ import { FileData, ChunkData, FileQueryFilters } from '../../types/file.types';
 import { chunkDistributionService } from '../chunks/distribution.service';
 import { chunkRetrievalService } from '../chunks/retrieval.service';
 import { temporaryStorageService } from '../chunks/storage.service';
+import { cleanupQueue } from '@/src/config/queue';
 
 /**
  * File Service
@@ -303,6 +304,9 @@ class FileService {
     // 1. Tell devices to delete chunks
     // 2. Remove chunk records from DB
     // 3. Remove file record from DB
+
+    // Step 1: Add job to queue
+    cleanupQueue.add('cleanup-deleted-files', { fileId });
   }
 
   /**

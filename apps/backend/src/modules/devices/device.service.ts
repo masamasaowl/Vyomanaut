@@ -68,6 +68,11 @@ class DeviceService {
       totalStorageBytes,
     } = payload;
 
+    // When your device registers 
+    if (totalStorageBytes < 1 * 1024 * 1024 * 1024) {
+      throw new Error('Device must offer at least 1GB of storage');
+    }
+
     // If device was offline, calculate how long was it used during reconnecting (🌅 Awakening)
     // look for device
     const existingDevice = await prisma.device.findUnique({
