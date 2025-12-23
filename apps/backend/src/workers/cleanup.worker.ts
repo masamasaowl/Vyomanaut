@@ -1,20 +1,19 @@
-import { FileStatus } from "@prisma/client";
-import { prisma } from "../config/database";
-import { cleanupQueue } from "../config/queue";
-import { temporaryStorageService } from "../modules/chunks/storage.service";
-import { healthScheduler } from "./healthScheduler";
-
+import { Job } from 'bull';
+import { cleanupQueue } from '../config/queue';
+import { chunkDeletionService } from '../modules/chunks/deletion.service';
+import { temporaryStorageService } from '../modules/chunks/storage.service';
+import { DeleteFileJobData, DeleteExcessReplicasJobData } from '../types/deletion.types';
 
 /**
- * Cleanup Worker
+ * CLEANUP WORKER - * Major change *
  * 
- * What it does:
- * - Fetches how old a job is 
- * - Send it to cleanUpOldChunks() function defined in temporary storage service
- * 
- * He tells how to perform 1 task in the cleanup queue
+ * Now handles 3 job types:
+ * 1. cleanup-temp-storage (this was existing)
+ * 2. delete-file 
+ * 3. delete-excess-replicas 
  */
 
+// JOB 1: Cleanup temporary storage
 cleanupQueue.process('cleanup-temp-storage', async (job) => {
 
   // Extract it's age
@@ -22,69 +21,65 @@ cleanupQueue.process('cleanup-temp-storage', async (job) => {
   
   console.log(`🧹 Cleaning up temp storage (older than ${olderThanHours}h)...`);
   
-  // Perform the actual cleaning
+  // Send it to cleanUpOldChunks() function defined in temporary storage service
   const deletedCount = await temporaryStorageService.cleanupOldChunks(olderThanHours);
   
   console.log(`✅ Cleanup complete: ${deletedCount} chunks deleted`);
   
-  // How much did we clean
   return { deletedCount };
 });
 
 
-// Clean the temporary storage of the deleted files
-cleanupQueue.process('cleanup-deleted-files', async (job) => {
+// JOB 2: Delete entire file 
+cleanupQueue.process('delete-file', async (job: Job<DeleteFileJobData>) => {
 
-  // Extract the fileID from the deleteFile() function in file.service.ts
-  const { fileId } = job.data;
+  // Extract them 
+  const { fileId, companyId, reason } = job.data;
   
-  // Extract the file
-  const file = await prisma.file.findUnique({
-     where: { id: fileId }
-  });
-
-  // 2 Important checks to ensure file is not yet deleted
-  if (!file) {
-    console.log(`⚠️ File ${fileId} already removed, skipping`);
-    return;
+  console.log(`🗑️ Processing file deletion: ${fileId} (${reason})`);
+  
+  // Delete entire file as defined in deletion.service.ts
+  try {
+    await chunkDeletionService.executeFileDeletion(fileId);
+    
+    console.log(`✅ File ${fileId} deleted successfully`);
+    
+    return { 
+      success: true, 
+      fileId, 
+      deletedAt: Date.now() 
+    };
+    
+  } catch (error) {
+    console.error(`❌ Failed to delete file ${fileId}:`, error);
+    throw error; // Retry
   }
+});
 
-  // We mark as deleted first so this needs to be done, before we begin the actual cleanup
-  if (file.status !== FileStatus.DELETED) {
-    console.log(`ℹ️ File ${fileId} is not marked DELETED, skipping`);
-    return;
+// JOB 3: Delete excess replicas 
+cleanupQueue.process('delete-excess-replicas', async (job: Job<DeleteExcessReplicasJobData>) => {
+
+  // Extract from job details
+  const { chunkId, excessCount } = job.data;
+  
+  console.log(`✂️ Trimming ${excessCount} excess replicas for chunk ${chunkId}`);
+  
+
+  // Delete one excess chunk as defined in deletion.service.ts
+  try {
+    await chunkDeletionService.executeExcessReplicaDeletion(chunkId);
+    
+    console.log(`✅ Excess replicas trimmed for chunk ${chunkId}`);
+    
+    return { 
+      success: true, 
+      chunkId, 
+      deletedCount: excessCount 
+    };
+    
+  } catch (error) {
+    console.error(`❌ Failed to trim replicas for chunk ${chunkId}:`, error);
+    throw error; // Retry
   }
+});
 
-  // These are the chunks that need to be deleted
-  const chunks = await prisma.chunk.findMany({
-    where: { fileId },
-    include: {
-      locations: {
-        include: {
-          device: true,
-        },
-      },
-    },
-  });
-
-
-  
-})
-
-
-
-// If running this file directly from server.ts (not imported)
-if (require.main === module) {
-  healthScheduler.start();
-  
-  // Handle shutdown
-  process.on('SIGTERM', () => {
-    healthScheduler.stop();
-    process.exit(0);
-  });
-  
-  process.on('SIGINT', () => {
-    healthScheduler.stop();
-    process.exit(0);
-  });
-}

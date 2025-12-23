@@ -264,22 +264,69 @@ export function setupDeviceEvents(socket: Socket): void {
    * Server requests a chunk from device
    * Device sends the chunk data back
    * 
+   * No handler needed here - it's in the
+   * retrieval.service.ts by 
+   * retrieveChunkFromDevice()
+   
    * Flow:
    * 1. Server sends chunk:request → Device reads from local storage
    * 2. Device sends chunk:data → Server receives encrypted chunk
    */
-  // Note: This event is handled by the device, not the server
-  // Server emits 'chunk:request', device responds with 'chunk:data'
-  // No handler needed here - it's in the retrieval service
+  
+
+  // ========================================
+  // EVENT 7: 🔺Chunk Deletion Request
+  // ========================================
+
+  /**
+  * EVENT 1: chunk:delete (Server → Device)
+  * Server tells device to delete a chunk
+  * 
+  * EVENT 2: chunk:deleted (Device → Server)
+  * Device confirms deletion
+  * 
+  * It just checks if the event was successful or not 
+  * The actual event is executed by 
+  * deletion.service.ts in
+  * deleteChunkFromDevice() 
+  */
+  
+  socket.on('chunk:deleted', async (payload: { 
+    chunkId: string; 
+    success: boolean; 
+    error?: string;
+  }) => {
+
+    // extract ID
+    try {
+      const deviceId = socket.data.deviceId;
+      
+      if (!deviceId) {
+        console.warn('⚠️ Chunk deletion confirmation from unregistered device');
+        return;
+      }
+      
+      // Quick check if the chunk was actually deleted 
+      if (payload.success) {
+        console.log(`✅ Device ${deviceId} confirmed deletion of chunk ${payload.chunkId}`);
+      } else {
+        console.error(`❌ Device ${deviceId} failed to delete chunk ${payload.chunkId}: ${payload.error}`);
+      }
+      
+    } catch (error) {
+      console.error('❌ Error handling chunk deletion confirmation:', error);
+    }
+  });
 }
 
 
-  // ========================================
-  // HELPERS    
-  // ========================================
+
+// ========================================
+// HELPERS    
+// ========================================
 
 /**
- * Helper: Get device ID from socket
+ * Get device ID from socket
  * Useful for other modules that need to know which device is connected
  */
 export function getDeviceIdFromSocket(socket: Socket): string | undefined {
@@ -287,7 +334,7 @@ export function getDeviceIdFromSocket(socket: Socket): string | undefined {
 }
 
 /**
- * Helper: Check if socket belongs to a registered device
+ * Check if socket belongs to a registered device
  */
 export function isDeviceRegistered(socket: Socket): boolean {
   return !!socket.data.deviceId;

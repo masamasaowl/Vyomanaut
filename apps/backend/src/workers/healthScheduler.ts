@@ -1,4 +1,5 @@
 import { cleanupQueue } from '../config/queue';
+import { chunkDeletionService } from '../modules/chunks/deletion.service';
 import { healthMonitoringService } from '../modules/replication/health.service';
 
 
@@ -11,9 +12,10 @@ import { healthMonitoringService } from '../modules/replication/health.service';
  * appointment scheduler, but for system health checks!
  * 
  * Jobs scheduled:
- * - Every 1 hour: Full system health scan
+ * - Every 1 hour: Full system health scan ( provide extra chunks )
  * - Every 1 hour: Cleanup temporary storage
  * - Every 24 hours: Deep health check + metrics
+ * - Every 12 hours: Delete excess chunks
  */
 
 class HealthScheduler {
@@ -28,9 +30,11 @@ class HealthScheduler {
 
     console.log('📅 Starting Health Scheduler...');
     
+    // =============================================
+    // Schedule 1: Full system scan every  1 hour
+    // =============================================
 
-    // Schedule 1: Full system scan every 5 minutes
-    // setInterval( {scanChunks}, run again in 5 minutes)
+    // setInterval( {scanChunks}, run again in 1 hour)
     const scanInterval = setInterval(async () => {
       try {
 
@@ -46,7 +50,10 @@ class HealthScheduler {
     this.intervals.push(scanInterval);
     
 
+    // =============================================
     // Schedule 2: Cleanup temporary storage every 1 hour
+    // =============================================
+
     // Condition: This runs every hour 
     //            but cleans only 24 hour old storages
     // Note: The cleanup worker is yet to be added
@@ -70,7 +77,10 @@ class HealthScheduler {
     this.intervals.push(cleanupInterval);
     
 
-    // Schedule 3: Log Health summary every 15 minutes
+    // =============================================
+    // // Schedule 3: Log Health summary every 24 hours
+    // =============================================
+
     const summaryInterval = setInterval(async () => {
       try {
 
@@ -93,10 +103,32 @@ class HealthScheduler {
       } catch (error) {
         console.error('❌ Health summary failed:', error);
       }
-    }, 15 * 60 * 1000); // 15 minutes
+    }, 24 * 60 * 60 * 1000); // 1 day
     
     this.intervals.push(summaryInterval);
+
+
+
+    // =============================================
+    // Schedule 4: Cleanup excess replicas every 6 hours
+    // =============================================
     
+    const excessReplicaInterval = setInterval(async () => {
+      try {
+        console.log('✂️ Running excess replica cleanup...');
+        
+        // The scan lives in deletion.service.ts
+        const results = await chunkDeletionService.scanAndCleanupExcessReplicas();
+        
+        console.log(`✅ Excess replica scan: ${results.excessFound} found, ${results.deletionsQueued} queued`);
+        
+      } catch (error) {
+        console.error('❌ Excess replica cleanup failed:', error);
+      }
+    }, 12 * 60 * 60 * 1000); // 12 hours
+
+    this.intervals.push(excessReplicaInterval);
+        
 
     // Run initial scan immediately as server starts
     setTimeout(async () => {
@@ -110,6 +142,8 @@ class HealthScheduler {
     console.log('✅ Health Scheduler started');
   }
   
+
+
   /**
    * Stop all scheduled jobs
    */

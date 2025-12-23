@@ -12,6 +12,7 @@ import { chunkRetrievalService } from './modules/chunks/retrieval.service';
 import { startHealingWorker } from './workers/healing.worker';
 import { healthScheduler } from './workers/healthScheduler';
 import { closeQueues } from './config/queue';
+import { chunkDeletionService } from './modules/chunks/deletion.service';
 
 /**
  * Vyomanaut Backend Server
@@ -164,6 +165,9 @@ class VyomonautServer {
 
     // This is the Retrieval call for all our Explorers
     chunkRetrievalService.setSocketIO(this.io);
+
+    // This is the termination call for all the devices          
+    chunkDeletionService.setSocketIO(this.io);
 
 
     this.io.on('connection', (socket) => {

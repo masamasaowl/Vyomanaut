@@ -6,6 +6,7 @@ import { chunkDistributionService } from '../chunks/distribution.service';
 import { chunkRetrievalService } from '../chunks/retrieval.service';
 import { temporaryStorageService } from '../chunks/storage.service';
 import { cleanupQueue } from '@/src/config/queue';
+import { chunkDeletionService } from '../chunks/deletion.service';
 
 /**
  * File Service
@@ -289,25 +290,46 @@ class FileService {
     return chunk ? this.convertToChunkData(chunk) : null;
   }
 
-  /**
-   * Delete a file (marks as DELETED, cleanup happens in background)
-   */
-  async deleteFile(fileId: string): Promise<void> {
-    await prisma.file.update({
-      where: { id: fileId },
-      data: { status: FileStatus.DELETED },
-    });
-    
-    console.log(`🗑️ File marked for deletion: ${fileId}`);
-    
-    // TODO: Trigger background job to:
-    // 1. Tell devices to delete chunks
-    // 2. Remove chunk records from DB
-    // 3. Remove file record from DB
-
-    // Step 1: Add job to queue
-    cleanupQueue.add('cleanup-deleted-files', { fileId });
+/**
+ * Delete a file (now complete)
+ * 
+ * Flow:
+ * 1. Mark file as DELETED (immediate response to company)
+ * 2. Queue background deletion job
+ * 3. Return success (company doesn't wait)
+ * 4. Worker handles actual cleanup later
+ */
+async deleteFile(fileId: string): Promise<void> {
+  
+  // Step 1: Get file info
+  const file = await prisma.file.findUnique({
+    where: { id: fileId },
+  });
+  
+  if (!file) {
+    throw new Error(`File ${fileId} not found`);
   }
+  
+  // Step 2: Mark as DELETED (immediate)
+  await prisma.file.update({
+    where: { id: fileId },
+    data: { status: FileStatus.DELETED },
+  });
+  
+  console.log(`🗑️ File ${fileId} marked for deletion`);
+  
+  // Step 3: Queue background deletion job (async)
+  await chunkDeletionService.queueFileDeletion(
+    fileId,
+    file.companyId,
+    'USER_REQUESTED'
+  );
+  
+  console.log(`✅ Deletion queued - company can continue working`);
+  
+  // Company gets immediate response, deletion happens in background!
+}
+
 
   /**
    * Get file statistics
