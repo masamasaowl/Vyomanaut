@@ -1,4 +1,4 @@
-import { cleanupQueue } from '../config/queue';
+import { cleanupQueue, metricsQueue } from '../config/queue';
 import { chunkDeletionService } from '../modules/chunks/deletion.service';
 import { healthMonitoringService } from '../modules/replication/health.service';
 
@@ -16,6 +16,7 @@ import { healthMonitoringService } from '../modules/replication/health.service';
  * - Every 1 hour: Cleanup temporary storage
  * - Every 24 hours: Deep health check + metrics
  * - Every 12 hours: Delete excess chunks
+ * - Every 48 hours: Calculate Earnings
  */
 
 class HealthScheduler {
@@ -128,7 +129,27 @@ class HealthScheduler {
     }, 12 * 60 * 60 * 1000); // 12 hours
 
     this.intervals.push(excessReplicaInterval);
+
+
+    // =============================================
+    // Schedule 5: Update earnings 6 hours
+    // =============================================
+    
+    const earningsInterval = setInterval(async () => {
+      try {
+        console.log('💰 Updating device earnings...');
         
+        await metricsQueue.add('update-earnings', {
+          timestamp: Date.now(),
+        });
+        
+      } catch (error) {
+        console.error('❌ Failed to queue earnings update:', error);
+      }
+    }, 48 * 60 * 60 * 1000); // 2 days
+
+    this.intervals.push(earningsInterval);
+            
 
     // Run initial scan immediately as server starts
     setTimeout(async () => {

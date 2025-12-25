@@ -96,6 +96,7 @@ class VyomonautServer {
     // Import routes
     const deviceRoutes = require('./api/routes/devices.routes').default;
     const fileRoutes = require('./api/routes/file.routes').default;
+    const paymentRoutes = require('./api/routes/payment.routes').default;
 
     // Health check endpoint
     this.app.get('/health', async (req, res) => {
@@ -131,6 +132,8 @@ class VyomonautServer {
     this.app.use('/api/v1/devices', deviceRoutes);
     // Use file routes
     this.app.use('/api/v1/files', fileRoutes);
+    // USe payment routes
+    this.app.use('/api/v1/payments', paymentRoutes);
 
     // 404 handler
     this.app.use((req, res) => {

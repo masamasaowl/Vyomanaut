@@ -48,12 +48,11 @@ export const healingQueue = createQueue('healing');
 
 /**
  * Metrics Queue 
- * ( This is left to be implemented )
  * 
  * Collects and processes analytics data
  * 
  * Job types:
- * - 'calculate-earnings': Update device earnings
+ * - 'update-earnings': Update device earnings
  * - 'aggregate-metrics': Generate system statistics
  * - 'snapshot-devices': Record device status history
  */
