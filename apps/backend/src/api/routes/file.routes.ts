@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { fileController } from '../../modules/files/file.controller';
 import { upload } from '../middleware/upload';
+import { authenticate, authorize } from '../middleware/authenticate';
+import { UserRole } from '@prisma/client';
 
 /**
  * File Routes
@@ -19,7 +21,13 @@ const router: Router = Router();
  */
 router.post(
   '/upload',
-  upload.single('file'),  // Multer handles file upload
+
+  // Verify JWT
+   authenticate,
+  // Only companies are allowed to upload files
+   authorize(UserRole.COMPANY),
+  // Multer handles file upload
+  upload.single('file'), 
   (req, res) => fileController.uploadFile(req, res)
 );
 
@@ -27,7 +35,13 @@ router.post(
  * GET /api/v1/files/:fileId/download
  * Download a file (returns binary data)
  */
-router.get('/:fileId/download', (req, res) => fileController.downloadFile(req, res));
+router.get(
+  '/:fileId/download',
+
+   authenticate,
+   // Only companies can download file back
+   authorize(UserRole.COMPANY),
+   (req, res) => fileController.downloadFile(req, res));
 
 /**
  * GET /api/v1/files/stats

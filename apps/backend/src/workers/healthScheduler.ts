@@ -132,7 +132,7 @@ class HealthScheduler {
 
 
     // =============================================
-    // Schedule 5: Update earnings 6 hours
+    // Schedule 5: Update earnings 48 hours
     // =============================================
     
     const earningsInterval = setInterval(async () => {

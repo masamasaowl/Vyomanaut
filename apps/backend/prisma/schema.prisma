@@ -43,8 +43,6 @@ model Device {
   // Device Identification
   deviceId     String     @unique // From mobile app (Android ID, etc.)
   deviceType   DeviceType
-  
-  userId       String // Link to user
 
   // Device Specs
   totalStorageBytes     BigInt // How much they allocated
@@ -69,20 +67,31 @@ model Device {
 
 
   // Payment tracking
-  // Do they earn 
+  // Do they earn, how much? 
   totalEarnings       Decimal @default(0) @db.Decimal(10, 6)
+
   // When did we last pay them
   lastPaymentAt       DateTime?
   // How much do we have left to pay
   pendingEarnings     Decimal @default(0) @db.Decimal(10, 6)
 
- // The entire Earning history of the device
+
+  // The entire Earning history of the device
   earningHistory      EarningRecord[]
+
+
+  // Who is your user?
+  // Connect to users table
+  // User gone -> all his devices gone
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   
+
   // Speed up the query
   @@index([status])
   @@index([reliabilityScore])
 }
+
 
 // ========================================
 // FILE MANAGEMENT
@@ -108,9 +117,7 @@ model File {
   originalName String
   mimeType     String
   sizeBytes    BigInt
-  
-  // Ownership
-  companyId String // Who uploaded this
+
   
   // Encryption
   encryptionKey String // Wrapped DEK (safe to store!)
@@ -124,6 +131,12 @@ model File {
   
   // All the chunks (one to many: one file many chunks)
   chunks Chunk[]
+
+
+  // Ownership, Who uploaded this?
+  // Connect to company info table
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
   
   @@index([companyId])
   @@index([status])
@@ -224,6 +237,189 @@ model ChunkLocation {
   @@index([deviceId])
   @@index([chunkId])
 }
+
+
+// ========================================
+// USER AUTHENTICATION
+// ========================================
+
+// The three roles interacting with our app
+enum UserRole {
+  USER        // Mobile app users
+  COMPANY     // Business customers
+  ADMIN       // Platform administrators
+}
+
+// How we verify them
+// Better than boolean as allows moderation
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  SUSPENDED
+}
+
+// ================ User (Explorer) ==================
+model User {
+
+  // Let's get to know each other
+  id              String   @id @default(cuid())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Authentication storage
+  email           String   @unique
+  password        String   // Bcrypt hashed
+  role            UserRole @default(USER)
+  
+  // Profile
+  name            String?
+  phone           String?
+  
+  // Verification (additional steps)
+  emailVerified   Boolean  @default(false)
+  verificationToken String?
+  status          VerificationStatus @default(PENDING)
+  
+  // To help resetting passwords
+  resetToken      String?
+  resetExpiry     DateTime?
+  
+  // One user can have multiple devices for himself 
+  // Relationship -> one to many 
+  devices         Device[]  
+  
+
+  // Earnings Summary 
+  // It is denormalized for quick access
+  // ( Field exists in Device Model also )
+  totalEarnings   Decimal  @default(0) @db.Decimal(10, 6)
+  
+  @@index([email])
+}
+
+
+// =============== Company (Enterprise) ==============
+model Company {
+
+  // Let's get you registered
+  id              String   @id @default(cuid())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Authentication
+  email           String   @unique
+  password        String   // Bcrypt hashed
+  role            UserRole @default(COMPANY)
+  
+  // Your Info
+  name            String
+  website         String?
+  industry        String?
+
+  // Verification
+  emailVerified   Boolean  @default(false)
+  verificationToken String?
+  status          VerificationStatus @default(PENDING)
+  
+  // Password Reset
+  resetToken      String?
+  resetExpiry     DateTime?
+  
+  
+  // * API Access *
+  // Companies might never register and access the service directly via APIs
+  apiKey          String   @unique @default(cuid())
+  // Hashed API secret for programmatic access
+  apiSecretHash   String?  
+
+  
+  // Subscription (for future operations)
+  // ex: free, starter, business, enterprise
+  plan            String   @default("free") 
+   // 10GB default
+  storageLimit    BigInt   @default(10737418240)
+  
+
+  // Relationships
+  // One to many
+  // Files uploaded by this company
+  files           File[]   
+  
+
+  // Usage Stats (denormalized for quick access)
+  totalStorageUsed BigInt  @default(0)
+  filesUploaded    Int     @default(0)
+  
+  @@index([email])
+  @@index([apiKey])
+}
+
+
+// ================== Admin (Staff) ==================
+model Admin {
+
+  // He's our guy
+  id              String   @id @default(cuid())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Authentication
+  email           String   @unique
+  password        String   // Bcrypt hashed
+  role            UserRole @default(ADMIN)
+  
+  // Admin Info
+  name            String
+
+  // The Admin is not a boolean 
+  // This would provide us greater control over which action needs to be performed if we scale drastically
+  // ["users.manage", "companies.manage", "system.config"]
+  permissions     String[] 
+  
+  // Security 
+  // 1. Track Logging
+  lastLoginAt     DateTime?
+  lastLoginIP     String?
+
+  // 2. Two factor authentication
+  twoFactorEnabled Boolean @default(false)
+  twoFactorSecret  String?
+  
+
+  @@index([email])
+}
+
+
+// ================== RefreshToken ==================
+model RefreshToken {
+
+  // This token would be used to revive our JWT
+  id          String   @id @default(cuid())
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime
+  
+  // Store token value
+  token       String   @unique
+  
+  // Who does this token belong to?
+  // This one table works for all the user roles, helping us not creating multiple tables
+  // USER, COMPANY, or ADMIN
+  userType    UserRole 
+  // ID of User, Company, or Admin
+  userId      String   
+  
+  // Security tracking
+  // If revoked then we log out of all the devices the User had registered from
+  isRevoked   Boolean  @default(false)
+  ipAddress   String?
+  // Which browser created the session
+  userAgent   String?
+  
+  @@index([token])
+  @@index([userId, userType])
+}
+
+
 
 // ========================================
 // ANALYTICS & MONITORING
