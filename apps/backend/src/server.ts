@@ -13,6 +13,7 @@ import { startHealingWorker } from './workers/healing.worker';
 import { healthScheduler } from './workers/healthScheduler';
 import { closeQueues } from './config/queue';
 import { chunkDeletionService } from './modules/chunks/deletion.service';
+import { logger } from './utils/logger';
 
 /**
  * Vyomanaut Backend Server
@@ -258,19 +259,21 @@ class VyomonautServer {
 
       // Start HTTP server
       this.httpServer.listen(config.server.port, config.server.host, () => {
-        console.log(`
-          🚀 Vyomanaut Backend Server Running!
 
-          Environment: ${config.isDevelopment ? 'Development' : 'Production'}
-          HTTP Server: http://${config.server.host}:${config.server.port}
-          WebSocket Server: ws://${config.server.host}:${config.server.port}
-          Health Check: http://${config.server.host}:${config.server.port}/health
-
-          Ready to coordinate distributed storage! 📦
-        `);
+       // Log it using Winston
+        logger.info('🚀 Vyomanaut Backend Server Running', {
+          environment: config.isDevelopment ? 'Development' : 'Production',
+          httpServer: `http://${config.server.host}:${config.server.port}`,
+          wsServer: `ws://${config.server.host}:${config.server.port}`,
+          healthCheck: `http://${config.server.host}:${config.server.port}/health`,
+        });
       });
-    } catch (error) {
-      console.error('❌ Failed to start server:', error);
+    } catch (error: any) {
+      logger.error('❌ Failed to start server', {
+        error: error.message,
+        stack: error.stack,
+      });
+
       process.exit(1);
     }
   }

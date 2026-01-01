@@ -12,274 +12,113 @@ What if we could turn every phone and laptop into part of the cloud? Vyomanaut l
 
 </aside>
 
-Two ways to look at it:
-
-1. Opportunity to earn in exchange for free space 
-2. Companies to spend a lot less on Cloud Infrastructure
-
-A little less strain on the environment
+Two wins:
+1. For You: Earn money from space you're not using anyway
+2. For Companies: Pay way less than AWS/Google Cloud
+3. Bonus: Less strain on data centres and the environment
 
 
-# 📄Pre-start Research
+# How It Works
 
-- Questions
-    
-    **Q: "How is this different from Storj?"**
-    
-    **A:** "Storj targets crypto users and requires technical setup. Vyomanaut is for mainstream users—one-tap install, earn in regular currency. We're also India-first, targeting the 700M smartphone market here."
-    
-    **Q: "What about security? What if someone hacks a device?"**
-    
-    **A:** "Data is AES-256 encrypted before leaving our servers. Devices only store encrypted chunks. Without the key, it's useless. Even we can't decrypt it—only the company can."
-    
-    **Q: "Why would companies trust this?"**
-    
-    **A:** "We're targeting low-priority data where speed doesn't matter—backups, archives, cold storage. For critical data, they'll still use AWS. But for archival, paying $1/TB instead of $5/TB is compelling."
-    
-    **Q: "How do you prevent fraud?"**
-    
-    **A:** "We verify storage with cryptographic proofs. Devices must prove they're storing data by quickly returning random chunks. If they fail, they're removed and don't earn."
-    
-    **Q: "What's your business model?"**
-    
-    **A:** "Companies pay $3/TB, we pay users $1.50/TB, we keep $1.50/TB. At 10,000TB stored, that's $15K/month revenue."
 
+The Journey of a File
+Handed with trust to Vyomanaut 
+```
+📤 UPLOAD JOURNEY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Company uploads file.pdf
+   Say it has a size = 3GB
+   ↓
+2. Backend: "Let me slice this pizza! 1GB at a time"
+   ├─ Chunk 0 (1GB) → Encrypt → Store temporarily ( deleted regularly )
+   ├─ Chunk 1 (1GB) → Encrypt → Store temporarily
+   └─ Chunk 2 (1GB) → Encrypt → Store temporarily
+   ↓
+3. Backend: "Who's available to store these?"
+   ├─ Finds Device A (online, reliable, 2GB free)
+   ├─ Finds Device B (online, reliable, 15GB free)
+   └─ Finds Device C (offline, reliable, 8GB free)
+   └─ Finds Device D (online, less reliable, 6GB free)
+   ↓
+4. Backend sends via WebSocket (based on reliability score):
+   ├─ Chunk 0 → Device A, B, D
+   ├─ Chunk 1 → Device A, B, D
+   └─ Chunk 2 → Device B, D, E
+   ↓
+5. Devices confirm: "Got it! Stored safely!"
+   ↓
+6. Backend marks file as ACTIVE ✅
+   ↓
+7. Backend deletes temporary copies
+   (Only devices have the chunks now!)
+
+
+📥 DOWNLOAD JOURNEY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Company: "I want file.pdf back"
+   ↓
+2. Backend: "Let me find all the slices!"
+   ├─ Checks database: Where is Chunk 0? (Device A, B, D)
+   ├─ Checks database: Where is Chunk 1? (Device A, B, D)
+   └─ Checks database: Where is Chunk 2? (Device B, D, E)
+   ↓
+3. Backend requests via WebSocket:
+   ├─ "Device B, send Chunk 0, 1, 2"
+   └─ (Only needs 1 device if it has all chunks)
+   ↓
+4. Device B sends all chunks
+   ↓
+5. Backend:
+   ├─ Receives encrypted chunks
+   ├─ Decrypts each one
+   ├─ Puts them in order (0, 1, 2)
+   ├─ Verifies checksum (file not corrupted?)
+   └─ Reassembles original file
+   ↓
+6. Returns file.pdf to company ✅
+```
 
 # Tech Stack:
 
 - Backend: Node.js + TypeScript + Express + Socket.io
-- Database: PostgreSQL + Prisma ORM + Redis (Caching) + Bull
-- Encryption: NodeJS crypto
-- Validation: Zod
-- Mobile: Kotlin (Android only for MVP)
+- Database: PostgreSQL + Prisma ORM + Redis + Bull
+- Security: AES-256-GCM + HKDF + JWT + Bcrypt + Zod
 - Dashboard: Next.js 15 + TypeScript + Tailwind CSS
 - Monorepo: Turborepo + pnpm
 - Containerization: Docker
 
-# Functional Flow
-```java
-┌─────────────┐
-│   Company   │ Uploads file
-└──────┬──────┘
-       ↓
-┌─────────────────────────────────┐
-│     Backend (Express)           │
-│  - Chunks file (5MB pieces)     │
-│  - Encrypts each chunk          │
-│  - Stores metadata in DB        │
-└──────┬──────────────────────────┘
-       ↓
-┌─────────────────────────────────┐
-│  Assignment Service             │
-│  - Picks 3 best devices         │
-│  - Creates ChunkLocation        │
-└──────┬──────────────────────────┘
-       ↓
-┌─────────────────────────────────┐
-│  Distribution Service           │
-│  - Sends via WebSocket          │
-│  - Waits for confirmation       │
-└──────┬──────────────────────────┘
-       ↓
-┌─────────────────────────────────┐
-│    Devices (3x)                 │
-│  - Receive chunks               │
-│  - Store locally                │
-│  - Confirm receipt              │
-└─────────────────────────────────┘
 
-[Later: Company wants file back]
-
-       ↓
-┌─────────────────────────────────┐
-│  Retrieval Service              │
-│  - Looks up ChunkLocations      │
-│  - Requests from devices        │
-│  - Reassembles file             │
-│  - Verifies checksum            │
-└──────┬──────────────────────────┘
-       ↓
-┌─────────────┐
-│   Company   │ Gets original file back!
-└─────────────┘
-```
 # Repo Structure 
 ```java
 vyomanaut/
 │
 ├── apps/
-│   ├── backend/                          # Main orchestration server
+│   ├── backend/              
 │   │   ├── src/
-│   │   │   ├── server.ts                 # Entry point
-│   │   │   │
-│   │   │   ├── config/                   # Configuration
-│   │   │   │   ├── database.ts           # Prisma client setup
-│   │   │   │   ├── redis.ts              # Redis client
-│   │   │   │   └── env.ts                # Environment variables
-│   │   │   │
-│   │   │   ├── modules/                  # Feature modules (organized by functionality)
-│   │   │   │   │
-│   │   │   │   ├── devices/              # Device Lifecycle Management
-│   │   │   │   │   ├── device.controller.ts
-│   │   │   │   │   ├── device.service.ts
-│   │   │   │   │   ├── device.model.ts
-│   │   │   │   │   └── device.types.ts
-│   │   │   │   │
-│   │   │   │   ├── files/                # File Processing Pipeline
-│   │   │   │   │   ├── file.controller.ts
-│   │   │   │   │   ├── file.service.ts
-│   │   │   │   │   ├── chunking.service.ts
-│   │   │   │   │   └── encryption.service.ts
-│   │   │   │   │
-│   │   │   │   ├── chunks/               # Chunk Management
-│   │   │   │   │   ├── chunk.controller.ts
-│   │   │   │   │   ├── chunk.service.ts
-│   │   │   │   │   ├── assignment.service.ts   # Intelligent assignment
-│   │   │   │   │   └── retrieval.service.ts    # Retrieval orchestration
-│   │   │   │   │
-│   │   │   │   ├── replication/          # Auto Replication & Healing
-│   │   │   │   │   ├── replication.service.ts
-│   │   │   │   │   ├── health.service.ts
-│   │   │   │   │   └── replication.worker.ts   # Bull queue worker
-│   │   │   │   │
-│   │   │   │   ├── payments/             # Payment Calculation
-│   │   │   │   │   ├── payment.service.ts
-│   │   │   │   │   └── earnings.calculator.ts
-│   │   │   │   │
-│   │   │   │   ├── analytics/            # Analytics & Monitoring
-│   │   │   │   │   ├── analytics.service.ts
-│   │   │   │   │   └── metrics.service.ts
-│   │   │   │   │
-│   │   │   │   └── auth/                 # NEW: JWT, sessions
-│   │   │   │       ├── auth.controller.ts
-│   │   │   │       ├── auth.service.ts
-│   │   │   │       └── auth.types.ts
-│   │   │   │
-│   │   │   ├── websocket/                # WebSocket Event Hub
-│   │   │   │   ├── socket.handler.ts     # Main Socket.io logic
-│   │   │   │   ├── device.events.ts      # Device-specific events
-│   │   │   │   └── chunk.events.ts       # Chunk-specific events
-│   │   │   │
-│   │   │   ├── api/                      # REST API (Company Gateway)
-│   │   │   │   ├── routes/
-│   │   │   │   │   ├── files.routes.ts
-│   │   │   │   │   ├── devices.routes.ts
-│   │   │   │   │   └── analytics.routes.ts
-│   │   │   │   └── middleware/
-│   │   │   │       ├── auth.ts
-│   │   │   │       ├── validate.ts        # NEW: Zod
-│   │   │   │       ├── rateLimit.ts
-│   │   │   │       ├── errorHandler.ts    # NEW
-│   │   │   │       └── logger.ts          # NEW
-│   │   │   │
-│   │   │   ├── workers/                   # NEW
-│   │   │   │   ├── healing.worker.ts
-│   │   │   │   ├── metrics.worker.ts
-│   │   │   │   └── cleanup.worker.ts
-│   │   │   │
-│   │   │   ├── utils/                    # Shared utilities
-│   │   │   │   ├── crypto.ts
-│   │   │   │   ├── checksum.ts
-│   │   │   │   ├── logger.ts              # Winston setup
-│   │   │   │   └── validators.ts
-│   │   │   │
-│   │   │   ├── storage/                   # NEW: Temp chunk storage
-│   │   │   │   └── temp/
-│   │   │   │
-│   │   │   └── types/                    # TypeScript types
-│   │   │       ├── device.types.ts
-│   │   │       ├── file.types.ts
-│   │   │       ├── chunk.types.ts
-│   │   │       └── index.ts
-│   │   │
-│   │   ├── prisma/                       # Database
-│   │   │   ├── schema.prisma             # Database schema
-│   │   │   └── migrations/
-│   │   │
-│   │   ├── tests/                        # Tests
-│   │   │   ├── unit/
-│   │   │   ├── integration/
-│   │   │   └── e2e/
-│   │   │
-│   │   ├── logs/                         # NEW: Log files
-│   │   ├── docker/                       # NEW: Deployment
-│   │   │   ├── Dockerfile
-│   │   │   └── docker-compose.prod.yml
-│   │   │
-│   │   ├── .env.example
-│   │   ├── package.json
-│   │   └── tsconfig.json
+│   │   │   ├── server.ts            # Main entry point
+│   │   │   ├── config/              # Database, Redis, environment
+│   │   │   ├── modules/             # Feature folders
+│   │   │   │   ├── devices/         # Device lifecycle
+│   │   │   │   ├── files/           # File processing
+│   │   │   │   ├── chunks/          # Chunk management
+│   │   │   │   ├── auth/            # Login/signup
+│   │   │   │   └── payments/        # Earnings tracking
+│   │   │   ├── websocket/           # Real-time events
+│   │   │   ├── api/                 # REST endpoints
+│   │   │   ├── workers/             # Background jobs
+│   │   │   └── utils/               # Helper functions
+│   │   ├── prisma/                  # Database schema
+│   │   └── tests/                   # Unit + Integration tests
 │   │
-│   ├── dashboard/                        # Next.js company portal
-│   │   ├── app/
-│   │   │   ├── (auth)/            ← Login, signup
-│   │   │   ├── (dashboard)/       ← Main app
-│   │   │   │   ├── files/
-│   │   │   │   ├── devices/
-│   │   │   │   ├── analytics/
-│   │   │   │   └── settings/
-│   │   │   └── api/               ← Next.js API routes
-│   │   ├── components/
-│   │   │   ├── ui/                ← shadcn components
-│   │   │   ├── files/
-│   │   │   ├── devices/
-│   │   │   └── charts/
-│   │   ├── lib/
-│   │   │   ├── api.ts             ← Backend API client
-│   │   │   └── auth.ts
-│   │   └── types/
-│   │
-│   └── mobile/                    ← Rename from android
-│       ├── android/                          # Kotlin mobile app
-│       │   └── app/
-│       └── ios/                   ← Future
+│   ├── Vyomanaut-Enterprise/            # Company web portal (Next.js)
+│   └── Vyomanaut-Explorer/               # User mobile app (Kotlin)
 │
 ├── packages/
-│   ├── shared/                           # Shared types across apps
-│   │   ├── types/
-│   │   │   ├── Device.ts
-│   │   │   ├── File.ts
-│   │   │   ├── Chunk.ts
-│   │   │   └── index.ts
-│   │   ├── constants/             ← NEW: Shared constants
-│   │   └── validators/            ← NEW: Shared Zod schemas
-│   │   └── package.json
-│   │
-│   └── api-client/                ← NEW: Shared API client
+│   └── shared/               # Code used by all apps
 │
-├── docs/
-│   ├── api/                       ← NEW: API docs
-│   │   ├── swagger.json
-│   │   └── postman.json
-│   ├── architecture/              ← NEW: Detailed docs
-│   │   ├── data-flow.md
-│   │   ├── security.md
-│   │   └── scaling.md
-│   ├── guides/
-│   │   ├── deployment.md          ← NEW
-│   │   └── development.md
-│   ├── architecture.md
-│   ├── api-reference.md
-│   └── demo-script.md
-│
-├── scripts/
-│   ├── setup.sh
-│   ├── deploy.sh                  ← NEW
-│   ├── seed/                      ← NEW: Organized seeds
-│   │   ├── devices.ts
-│   │   ├── files.ts
-│   │   └── companies.ts
-│   └── migrations/                ← NEW: Data migrations
-│   └── seed-database.ts
-│
-├── docker-compose.yml                    # Local dev: PostgreSQL + Redis
-├── turbo.json
-├── .github/
-│   └── workflows/                 ← NEW: CI/CD
-│       ├── test.yml
-│       ├── deploy-staging.yml
-│       └── deploy-prod.yml
-└── package.json
+└── docs/                     # Documentation
 ```
 
 
@@ -306,13 +145,53 @@ That's exactly what our backend does for data chunks and devices
 
     # 🎯 10 Core Functionalities of Backend 
     
-    1. Manage Device Lifecycle 
-    2. Manage WebSocket Event 
-    3. Process Files to chunks and encrypt it 
-    4. Store Chunks Locations
-    5. Intelligently Assign Chunks
-    6. Retrieve the chunks -> turn into files
-    7. Automatic Replication & Healing (in case of loss)
-    8. Server Health Monitoring
-    9.  Calculate Payments
-    10. Company API Gateway
+    1. File Upload & Download - Companies can store/retrieve files
+    2. Real-Time Device Communication - WebSockets keep devices connected
+    3. Industry-Grade Encryption - AES-256-GCM ( used by VPNs and TLS in https)
+    4. Store Chunks Locations - Like a register to track which device has which chunk
+    5. Intelligently Assign Chunks - Based on reliability 
+    6. Self-Healing - If a device goes offline, automatically creates new copies
+    7. Auto-Replication - Always keeps 3 copies of every chunk
+    8. Earnings Calculator - Tracks how much you earn per GB per hour
+    9. Authentication System - JWT tokens for users and companies
+    10. API Access - Companies can integrate via REST APIs
+
+
+# 📄Questions
+
+- 
+    
+    **Q: "How is this different from Storj?"**
+    
+    **A:** "Storj targets crypto users and requires technical setup. Vyomanaut is for mainstream users—one-tap install, earn in regular currency. We're also India-first, targeting the 700M smartphone market here."
+
+
+    **Q: "How is this different from Dropbox?"**
+    
+    **A:** "Dropbox stores your data in their data centers. We distribute it across thousands of user devices - cheaper and greener!"
+
+    
+    **Q: "What if a device loses my chunk?"**
+    
+    **A:** "We keep 3 copies on different devices. If one goes offline, we automatically create a new copy and clone it to another device, this ensures the file stays just a click away from you"
+
+
+    **Q: "Can device owners read my files?"**
+    
+    **A:** "Everything is encrypted before it leaves our server. They just see random gibberish: a8f4c2e9d7b3... If they tamper with the data, the GCM module detects it and the device gets suspended"
+
+
+    **Q: "What if someone hacks a device?"**
+    
+    **A:** "Data is AES-256 encrypted before leaving our servers. Devices only store encrypted chunks. Without the key, it's useless. Even we can't decrypt it—only the company can."
+    
+
+    **Q: "Why would companies trust this?"**
+    
+    **A:** "We're targeting low-priority data where speed doesn't matter—backups, archives, cold storage. For critical data, they'll still use AWS. But for archival, they can easily prefer us"
+    
+    
+    **Q: "What's your business model?"**
+    
+    **A:** "This remains an less researched topic for us. But just for numbers we can say: Companies pay $3/TB, we pay users $2.75/TB, and keep $0.25/TB. At 10,000TB stored, that's $75K/month revenue."
+
