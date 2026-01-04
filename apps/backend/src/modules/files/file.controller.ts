@@ -81,18 +81,27 @@ class FileController {
    */
   async downloadFile(req: Request, res: Response): Promise<void> {
     try {
+      // Extract the file ID
       const { fileId } = req.params;
       
       console.log(`⬇️ Download request for file ${fileId}`);
-      
+      // Fetch the file
       const result = await fileService.downloadFile(fileId);
       
-      // Set headers for file download
+
+      // We must tell the browser or Axios receiving our response about what it is looking at 
+      // It is not normal JSON
+      // So our response header looks like this
+
+      // 1. We define the MIME type 
       res.setHeader('Content-Type', result.mimeType);
+      // 2. We tell it about the name of the file
       res.setHeader('Content-Disposition', `attachment; filename="${result.fileName}"`);
+      // 3. We inform the size of the file so the download progress bar can be formed
       res.setHeader('Content-Length', result.fileBuffer.length);
       
-      // Send file
+
+      // We send the file
       res.send(result.fileBuffer);
       
       console.log(`✅ Download sent: ${result.fileName}`);
