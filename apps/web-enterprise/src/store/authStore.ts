@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { create } from 'zustand';
 import { authAPI } from '@/lib/api';
 
@@ -9,6 +8,7 @@ import { authAPI } from '@/lib/api';
  */
 
 // Define Types
+// The user after login
 interface User {
   id: string;
   email: string;
@@ -126,8 +126,9 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
   },
   
+
   // Load user from localStorage on app start
-  // This fetches all the tokens 
+  // This fetches all the tokens and if they exist then begin from there
   loadUser: async () => {
     try {
 

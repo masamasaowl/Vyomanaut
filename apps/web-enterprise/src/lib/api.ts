@@ -58,8 +58,6 @@ api.interceptors.response.use(
   async (error: AxiosError) => {
     
     // Step 1: Fetch the original request the user made from Axios
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const originalRequest = error.config as any;
     
     // If 401 error shows up & if we have not already tried refreshing the token then
