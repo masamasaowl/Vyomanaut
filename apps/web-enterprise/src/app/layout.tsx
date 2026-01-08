@@ -21,7 +21,7 @@ export default function RootLayout({
     <html lang="en">
       <body className={inter.className}>
 
-        {/* To Authorize the user at the start of the app */}
+        {/* To Authorize the user at the start of the app we wrap them all pages */}
         <AuthProvider>
           {children}
         </AuthProvider>
