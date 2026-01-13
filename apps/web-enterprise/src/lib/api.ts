@@ -175,6 +175,7 @@ export const authAPI = {
  * - download
  * - list
  * - get
+ * - getChunks
  * - delete
  * - stats
  */
@@ -183,7 +184,7 @@ export const fileAPI = {
   /**
    * Upload FIle 
    * @param file - File is a browser type for all files 
-   * @param onProgress - optional param to report upload progress
+   * @param onProgress - param to report upload progress
    * @returns - Response containing all info about the file
    */
   upload: async (file: File, onProgress?: (progress: number) => void) => {
@@ -225,20 +226,7 @@ export const fileAPI = {
     return response.data;
   },
   
-  // List all files
-  // Use filters to list specific files
-  list: async (filters?: { status?: string }) => {
-    const response = await api.get('/api/v1/files', { params: filters });
-    return response.data;
-  },
   
-  // Get file details using it's ID
-  get: async (fileId: string) => {
-    const response = await api.get(`/api/v1/files/${fileId}`);
-    return response.data;
-  },
-  
-
   // Download file
   // Uses the file name and ID
   download: async (fileId: string, fileName: string) => {
@@ -284,15 +272,109 @@ export const fileAPI = {
     return response.data;
   },
   
+
+  // List all files
+  // Use filters to list specific files
+  list: async (filters?: { status?: string }) => {
+    const response = await api.get('/api/v1/files', { params: filters });
+    return response.data;
+  },
+
+
+  // Get file details using it's ID
+  get: async (fileId: string) => {
+    const response = await api.get(`/api/v1/files/${fileId}`);
+    return response.data;
+  },
+
+
+  getChunks: async (fileId: string) => {
+    const response = await api.get(`/api/v1/files/${fileId}/chunks`);
+    return response.data;
+  },
+
+
   // Delete file
   delete: async (fileId: string) => {
     const response = await api.delete(`/api/v1/files/${fileId}`);
     return response.data;
   },
   
+  
   // Get file stats
   stats: async () => {
     const response = await api.get('/api/v1/files/stats');
+    return response.data;
+  },
+};
+
+// ===================================
+// DEVICE APIs (NEW)
+// ===================================
+
+export const deviceAPI = {
+  list: async (filters?: {
+    status?: string;
+    minReliability?: number;
+    minStorage?: number;
+  }) => {
+    const response = await api.get('/api/v1/devices', { params: filters });
+    return response.data;
+  },
+  
+  get: async (deviceId: string) => {
+    const response = await api.get(`/api/v1/devices/${deviceId}`);
+    return response.data;
+  },
+  
+  getHealth: async (deviceId: string) => {
+    const response = await api.get(`/api/v1/devices/${deviceId}/health`);
+    return response.data;
+  },
+  
+  getHealthyDevices: async (params?: {
+    minStorage?: number;
+    minReliability?: number;
+    limit?: number;
+  }) => {
+    const response = await api.get('/api/v1/devices/healthy', { params });
+    return response.data;
+  },
+  
+  stats: async () => {
+    const response = await api.get('/api/v1/devices/stats');
+    return response.data;
+  },
+  
+  suspend: async (deviceId: string, reason?: string) => {
+    const response = await api.post(`/api/v1/devices/${deviceId}/suspend`, { reason });
+    return response.data;
+  },
+};
+
+// ===================================
+// PAYMENT APIs (NEW)
+// ===================================
+
+export const paymentAPI = {
+  getDeviceEarnings: async (deviceId: string) => {
+    const response = await api.get(`/api/v1/payments/device/${deviceId}`);
+    return response.data;
+  },
+  
+  getSystemStats: async () => {
+    const response = await api.get('/api/v1/payments/stats');
+    return response.data;
+  },
+};
+
+// ===================================
+// HEALTH CHECK
+// ===================================
+
+export const healthAPI = {
+  check: async () => {
+    const response = await api.get('/health');
     return response.data;
   },
 };
