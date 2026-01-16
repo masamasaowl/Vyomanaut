@@ -214,7 +214,7 @@ export default function FileDetailsPage({ params }: { params: Promise<{ id: stri
                     <div key={chunk.id} className="px-6 py-4 hover:bg-gray-50">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-4">
-                          <div className="flex-shrink-0 w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center">
+                          <div className="shrink-0 w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center">
                             <HardDrive className="w-6 h-6 text-gray-600" />
                           </div>
                           
