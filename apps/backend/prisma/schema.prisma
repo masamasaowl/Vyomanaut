@@ -1,7 +1,7 @@
 // Prisma Schema for Vyomanaut
 // This is our source of truth for the database structure
 
-// Contains 7 models
+// Contains 11 models
 
 generator client {
   provider = "prisma-client-js"
