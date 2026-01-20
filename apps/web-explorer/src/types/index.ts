@@ -47,17 +47,6 @@ export interface FileDetails extends FileMetadata {
   checksum: string;
 }
 
-export interface ChunkMetadata {
-  id: string;
-  sequenceNum: number;
-  sizeBytes: number;
-  sizeKB: string;
-  status: ChunkStatus;
-  currentReplicas: number;
-  targetReplicas: number;
-  createdAt: string;
-}
-
 export interface FileUploadResponse {
   success: boolean;
   file: FileMetadata;
@@ -78,6 +67,31 @@ export interface FileStats {
   totalChunks: number;
 }
 
+
+// ===================================
+// CHUNK TYPES
+// ===================================
+export interface ChunkMetadata {
+  id: string;
+  sequenceNum: number;
+  sizeBytes: number;
+  sizeKB: string;
+  status: ChunkStatus;
+  currentReplicas: number;
+  targetReplicas: number;
+  createdAt: string;
+}
+export interface ChunkLocation {
+  id: string;
+  chunkId: string;
+  deviceId: string;
+  localPath: string;
+  isHealthy: boolean;
+  lastVerified: Date | null;
+  createdAt: Date;
+}
+
+
 // ===================================
 // DEVICE TYPES
 // ===================================
@@ -89,14 +103,42 @@ export interface Device {
   id: string;
   deviceId: string;
   deviceType: DeviceType;
-  status: DeviceStatus;
+  userId: string;
+  
   totalStorageBytes: number;
   availableStorageBytes: number;
-  availableStorageGB: string;
+  
+  status: DeviceStatus;
+  lastSeenAt: Date;
+  
   reliabilityScore: number;
-  lastSeenAt: string;
-  totalEarnings: string;
-  createdAt: string;
+  totalEarnings: number;
+  pendingEarnings: number;
+  
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface DeviceRegistrationPayload {
+  deviceId: string;
+  deviceType: DeviceType;
+  userId: string;
+  totalStorageBytes: number;
+  model?: string;
+  osVersion?: string;
+  appVersion?: string;
+}
+
+export interface DeviceRegistrationResponse {
+  success: boolean;
+  device: {
+    id: string;
+    deviceId: string;
+    status: DeviceStatus;
+    reliabilityScore: number;
+    totalEarnings: string;
+  };
+  message: string;
 }
 
 export interface DeviceHealth {

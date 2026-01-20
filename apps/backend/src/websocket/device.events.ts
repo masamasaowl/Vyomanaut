@@ -79,7 +79,7 @@ export function setupDeviceEvents(socket: Socket): void {
           reliabilityScore: device.reliabilityScore,
           totalEarnings: device.totalEarnings.toString(),
         },
-        message: 'Device registered successfully! You are now earning money! 💰',
+        message: 'Device registered successfully! You are now earning! ',
       };
 
       // Tell the using emit
@@ -141,6 +141,7 @@ export function setupDeviceEvents(socket: Socket): void {
       };
 
       socket.emit(DeviceEvent.PONG, response);
+
 
       // Optional: Log every 10th ping to avoid spam
       // (In production, you wouldn't log every ping - too noisy!)
@@ -235,6 +236,7 @@ export function setupDeviceEvents(socket: Socket): void {
    */
   socket.on('chunk:confirm', async (payload: { chunkId: string; success: boolean; error?: string }) => {
     try {
+      
       const deviceId = socket.data.deviceId;
       
       if (!deviceId) {
