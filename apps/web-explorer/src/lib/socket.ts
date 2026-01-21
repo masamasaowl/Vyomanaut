@@ -41,7 +41,8 @@ class SocketManager {
   
 
   // Event callbacks
-  // These are empty containers that take up the actual service functions when the events take place
+  // These are empty functions that would later store the work declared by service 
+  // They are made to pass absolute control of the logic to the services 
   private onConnectedCallback: (() => void) | null = null;
   private onDisconnectedCallback: (() => void) | null = null;
   private onChunkAssignedCallback: ((chunk: ChunkMetadata) => void) | null = null;
@@ -107,8 +108,11 @@ class SocketManager {
         // Reset flags
         this.isConnecting = false;
         this.reconnectAttempts = 0;
+
+        // Run the empty box which by now must be containing the work declared by the service
         this.onConnectedCallback?.();
-        // The promise is resolved
+
+        // The promise gets resolved
         resolve();
       });
       
@@ -222,6 +226,8 @@ class SocketManager {
    * This ensures our device stays live on the backend servers 
    * It helps it track our uptime
    * We expect a pong response from the backend
+   * 
+   * This is activated after the device registers
    */
   sendPing(deviceId: string, availableStorageBytes: number) {
     // Connect to the socket
@@ -242,6 +248,8 @@ class SocketManager {
    * Confirm chunk storage success
    * This is happening on our end when we store a single chunk 
    * This informs the server that the chunk has been stored 
+   * 
+   * Used in "chunk:assign"
    */
   confirmChunkStorage(chunkId: string, success: boolean, error?: string) {
     if (!this.socket?.connected) {
@@ -256,6 +264,8 @@ class SocketManager {
   /**
    * Send chunk data back to backend
    * Happens when the server requests for chunk data to be displayed on the company dashboard 
+   * 
+   * Used in "chunk:request"
    */
   sendChunkData(chunkId: string, data: string, success: boolean, error?: string) {
     if (!this.socket?.connected) {
@@ -268,6 +278,7 @@ class SocketManager {
   
   /**
    * Confirm chunk deletion
+   * Used in "chunk:delete"
    */
   confirmChunkDeletion(chunkId: string, success: boolean, error?: string) {
     if (!this.socket?.connected) {
@@ -280,8 +291,8 @@ class SocketManager {
   
 
   /**
-   * Register event callbacks
-   * These are methods which our app would call directly to run the events
+   * These are methods 
+   * When the service calls them, the empty boxes would store the work declared by the service
    */
   onConnected(callback: () => void) {
     this.onConnectedCallback = callback;
