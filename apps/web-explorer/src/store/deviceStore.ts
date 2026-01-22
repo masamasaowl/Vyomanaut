@@ -16,7 +16,7 @@ interface DeviceState {
   // Chunks stored on this device
   chunks: ChunkLocation[];
   
-  // Actions
+  // 3 Actions
   connectSocket: () => Promise<void>;
   registerDevice: (
     deviceName: string,
