@@ -53,7 +53,7 @@ export default function DeviceRegisterPage() {
   }, [isRegistered, router]);
   
 
-  // Auto-generate device name from browser
+  // We assign the device name as the browser name by default 
   useEffect(() => {
     // Extract the browser 
     if (!deviceName) {
