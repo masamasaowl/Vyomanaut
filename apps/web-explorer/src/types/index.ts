@@ -91,6 +91,23 @@ export interface ChunkLocation {
   createdAt: Date;
 }
 
+// How does a device store a chunk on it's disk
+export interface StoredChunk {
+  id: string;
+  chunkId: string;
+  deviceId: string;
+  encryptedData: string; // Base64-encoded chunk data
+  localPath: string;
+  fileId: string;
+  sequenceNum: number;
+  sizeBytes: number;
+  checksum: string;
+  isHealthy: boolean;
+  lastVerified: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 
 // ===================================
 // DEVICE TYPES

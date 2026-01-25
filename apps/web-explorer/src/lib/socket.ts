@@ -3,6 +3,7 @@ import type {
   DeviceRegistrationPayload,
   DeviceRegistrationResponse,
   ChunkMetadata,
+  StoredChunk,
 } from '@/types';
 
 /**
@@ -45,7 +46,7 @@ class SocketManager {
   // They are made to pass absolute control of the logic to the services 
   private onConnectedCallback: (() => void) | null = null;
   private onDisconnectedCallback: (() => void) | null = null;
-  private onChunkAssignedCallback: ((chunk: ChunkMetadata) => void) | null = null;
+  private onChunkAssignedCallback: ((chunk: StoredChunk) => void) | null = null;
   private onChunkRequestedCallback: ((chunkId: string) => void) | null = null;
   private onChunkDeleteCallback: ((chunkId: string, reason: string) => void) | null = null;
   
@@ -159,7 +160,7 @@ class SocketManager {
     
     // We listen for 
     // 1. Chunk assignment 
-    this.socket.on('chunk:assign', (data: ChunkMetadata) => {
+    this.socket.on('chunk:assign', (data: StoredChunk) => {
       // log the event 
       console.log('📦 Chunk assigned:', data.id);
       // Empty event handler 
@@ -302,7 +303,7 @@ class SocketManager {
     this.onDisconnectedCallback = callback;
   }
   
-  onChunkAssigned(callback: (chunk: ChunkMetadata) => void) {
+  onChunkAssigned(callback: (chunk: StoredChunk) => void) {
     this.onChunkAssignedCallback = callback;
   }
   

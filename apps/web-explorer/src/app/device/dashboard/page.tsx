@@ -39,7 +39,7 @@ export default function DeviceDashboardPage() {
     // Interval of 1s
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
 
-    //
+    // End the timer when component unmounts
     return () => clearInterval(timer);
   }, []);
 
@@ -82,7 +82,7 @@ export default function DeviceDashboardPage() {
   const earningsPerHour = device ? (device.totalStorageBytes / (1024 ** 3)) * (0.5 / 24) : 0;
   const sessionEarnings = earningsPerHour * (sessionUptimeSeconds / 3600);
 
-  
+
   if (!device) {
     return (
       <div className="min-h-screen flex items-center justify-center">

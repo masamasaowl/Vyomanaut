@@ -1,4 +1,8 @@
 // Prisma Schema for Vyomanaut-Explorer
+
+// This database simulates device disk storage in the browser
+// Stores encrypted chunks that backend assigns to this "device"
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,3 +11,45 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+// ================== StoredChunk ==================
+// Represents a chunk stored on this "device"
+// Simulates what would be in /SDcard/chunks/ on Android
+model StoredChunk {
+  // Record ID
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Chunk Identification
+  chunkId      String  // ID from backend
+  deviceId     String  // Which device this belongs to
+  
+  // Chunk Data (the actual encrypted bytes)
+  encryptedData String  // Base64-encoded encrypted chunk
+  
+  // Storage Metadata
+  localPath    String  // Simulated path to demo the device storage path
+  fileId       String  // Parent file ID
+  sequenceNum  Int     // Chunk sequence number (for reassembly)
+  sizeBytes    Int     // Size of encrypted chunk
+  checksum     String  // SHA-256 for integrity verification
+  
+  // Health Tracking
+  isHealthy      Boolean   @default(true)
+  lastVerified   DateTime?
+  
+  // Indexes for fast queries
+  @@index([chunkId])
+  @@index([deviceId])
+  @@index([chunkId, deviceId])
+
+  // A device can't store same chunk twice
+  @@unique([chunkId, deviceId]) 
+}
+
+
+// Future models:
+// - DeviceConfig: Store device settings/preferences
+// - EarningsLog: Track earnings history locally
+// - HealthLog: Track chunk verification history

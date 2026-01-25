@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { socketManager } from '@/lib/socket';
-import type { Device, ChunkMetadata, ChunkLocation } from '@/types';
+import type { Device, ChunkLocation, StoredChunk } from '@/types';
+import { chunkStorageService } from '@/services/chunkStorage';
 
 
 // Type declaration of the store
@@ -15,6 +16,7 @@ interface DeviceState {
   
   // Chunks stored on this device
   chunks: ChunkLocation[];
+  loadingChunks: boolean;
   
   // 3 Actions
   connectSocket: () => Promise<void>;
@@ -26,8 +28,8 @@ interface DeviceState {
   disconnectSocket: () => void;
   
   // Chunk management
-  addChunk: (chunk: ChunkLocation) => void;
-  removeChunk: (chunkId: string) => void;
+  loadChunks: () => Promise<void>;
+  refreshChunks: () => Promise<void>;
   updateChunkHealth: (chunkId: string, isHealthy: boolean) => void;
 }
 
@@ -49,6 +51,7 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
   isConnected: false,
   connectionError: null,
   chunks: [],
+  loadingChunks: false,
   
 
   // =================================================
@@ -92,41 +95,52 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
       
       
       // iii. 'chunk:assign' event 
-      // We store the chunk in our DB as soon as it happens
-      socketManager.onChunkAssigned(async (chunkMetadata: ChunkMetadata) => {
+      // We store the chunk in our DB as soon as event gets triggered
+      socketManager.onChunkAssigned(async (storedChunk: StoredChunk) => {
 
         // We have received a chunk
-        console.log('📦 Received chunk assignment:', chunkMetadata.id);
+        console.log('📦 Received chunk assignment:', storedChunk.id);
+
+
+        // Fetch the registered device ( Our device )
+        const device = get().device;
+        // If it doesn't exist 
+        if (!device) {
+          console.error('❌ Cannot store chunk: Device not registered');
+          socketManager.confirmChunkStorage(storedChunk.id, false, 'Device not registered');
+          return;
+        }
         
-        // Store chunk in PostgreSQL (will implement in next step)
-
-        // For now, we simply add chunk to local state
+  
         try {
-          
-          // Step 1: Define the incoming chunk
-          const newChunk: ChunkLocation = {
-            id: crypto.randomUUID(),
-            chunkId: chunkMetadata.id,
-            deviceId: get().device?.deviceId || '',
-            localPath: `/chunks/${chunkMetadata.id}`,
-            isHealthy: true,
-            lastVerified: new Date(),
-            createdAt: new Date(),
-          };
-          
-          // Step 2: Save this chunk inside a state variable 
-          get().addChunk(newChunk);
-          
-          // Step 3: Inform the backend that the chunk has been stored 
-          socketManager.confirmChunkStorage(chunkMetadata.id, true);
+          // Store chunk in PostgreSQL
+          await chunkStorageService.storeChunk({
+            chunkId: storedChunk.id,
+            deviceId: device.deviceId,
 
+            // The encrypted data
+            encryptedData: storedChunk.encryptedData || '',
+            fileId: storedChunk.fileId || '',
+            sequenceNum: storedChunk.sequenceNum,
+            sizeBytes: storedChunk.sizeBytes,
+            checksum: storedChunk.checksum,
+          });
+
+          // Refresh chunk list
+          await get().refreshChunks();
+          
+          // Confirm to backend
+          socketManager.confirmChunkStorage(storedChunk.id, true);
+          
+          console.log(`✅ Chunk ${storedChunk.id} stored successfully`);
+          
 
         } catch (error) {
           console.error('❌ Failed to store chunk:', error);
 
           // Inform backend about the failure
           socketManager.confirmChunkStorage(
-            chunkMetadata.id,
+            storedChunk.id,
             false,
             error instanceof Error ? error.message : 'Storage failed'
           );
@@ -138,15 +152,24 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
       socketManager.onChunkRequested(async (chunkId: string) => {
         // Inform about the requested chunk
         console.log('📤 Chunk retrieval requested:', chunkId);
-        
-        try {
-          // Retrieve chunk from PostgreSQL (will implement in next step)
 
-          // For now, send mock data
-          const mockData = 'base64_encoded_chunk_data';
+        // Check if device is authenticated
+        const device = get().device;
+        if (!device) {
+          socketManager.sendChunkData(chunkId, '', false, 'Device not registered');
+          return;
+        }
+
+
+        try {
+          // Retrieve chunk from PostgreSQL 
+          const encryptedData = await chunkStorageService.retrieveChunk(chunkId, device.deviceId);
           
-          // Send the chunk data to the server 
-          socketManager.sendChunkData(chunkId, mockData, true);
+          // Send to backend
+          socketManager.sendChunkData(chunkId, encryptedData, true);
+          
+          console.log(`✅ Chunk ${chunkId} sent to backend`);
+
         } catch (error) {
           console.error('❌ Failed to retrieve chunk:', error);
 
@@ -163,16 +186,28 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
 
       // v. "chunk:delete" event 
       socketManager.onChunkDelete(async (chunkId: string, reason: string) => {
-        console.log('🗑️ Chunk deletion requested:', chunkId, reason);
-        
-        try {
-          // Delete chunk from PostgreSQL (will implement in next step)
 
-          // Currently we simply delete chunk from our state variable
-          get().removeChunk(chunkId);
+        console.log('🗑️ Chunk deletion requested:', chunkId, reason);
+
+        // Authenticate device
+        const device = get().device;
+        if (!device) {
+          socketManager.confirmChunkDeletion(chunkId, false, 'Device not registered');
+          return;
+        }
+
+        try {
+          // Delete chunk from PostgreSQL
+          await chunkStorageService.deleteChunk(chunkId, device.deviceId);
           
-          // We send the delete confirmation to the server
+          // Refresh chunk list
+          await get().refreshChunks();
+          
+          // Confirm to backend
           socketManager.confirmChunkDeletion(chunkId, true);
+          
+          console.log(`✅ Chunk ${chunkId} deleted successfully`);
+
         } catch (error) {
           console.error('❌ Failed to delete chunk:', error);
 
@@ -293,39 +328,51 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
     set({ isConnected: false, device: null, isRegistered: false });
   },
   
-  /**
-   * Add chunk to local state
-   * 
-   * Used in "chunk:assign" event 
-   */
-  addChunk: (chunk: ChunkLocation) => {
-    set((state) => ({
-      chunks: [...state.chunks, chunk],
-      device: state.device ? {
-        ...state.device,
 
-        // Mock: reduce by 1MB
-        availableStorageBytes: state.device.
-        availableStorageBytes - 1024 * 1024, 
-      } : null,
-    }));
+  /**
+   * Load chunks from PostgreSQL
+   */
+  loadChunks: async () => {
+
+    // Make sure the device is registered
+    const device = get().device;
+    if (!device) return;
+    
+    // We are fetching the chunk details for the device
+    set({ loadingChunks: true });
+    
+    try {
+      // Make a Read all request to DB
+      const chunks = await chunkStorageService.getDeviceChunks(device.deviceId);
+      
+      // Update available storage based on chunks
+      const usedStorage = chunks.reduce((sum, c) => sum + c.sizeBytes, 0);
+      const availableStorage = device.totalStorageBytes - usedStorage;
+      
+      // Work done we update the states
+      set({
+        chunks,
+        loadingChunks: false,
+        device: {
+          ...device,
+          availableStorageBytes: availableStorage,
+        },
+      });
+      
+    } catch (error) {
+      console.error('❌ Failed to load chunks:', error);
+      set({ loadingChunks: false });
+    }
   },
   
-
   /**
-   * Remove chunk from local state
-   * 
-   * Used in "chunk:delete" event 
+   * Refresh chunks from PostgreSQL
+   * Called after chunk add/remove operations
    */
-  removeChunk: (chunkId: string) => {
-    set((state) => ({
-      chunks: state.chunks.filter(c => c.chunkId !== chunkId),
-      device: state.device ? {
-        ...state.device,
-        availableStorageBytes: state.device.availableStorageBytes + 1024 * 1024, // Mock: add back 1MB
-      } : null,
-    }));
+  refreshChunks: async () => {
+    await get().loadChunks();
   },
+  
   
   /**
    * Update chunk health status
