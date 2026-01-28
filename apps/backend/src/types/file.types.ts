@@ -157,7 +157,7 @@ export interface FileProcessingResult {
  * To find a particular file 
  */
 export interface FileQueryFilters {
-  companyId?: string;
+  companyId: string;
   status?: FileStatus;
   minSize?: number;
   maxSize?: number;

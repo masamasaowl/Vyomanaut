@@ -250,11 +250,11 @@ class FileService {
   /**
    * List all files available with filters
    */
-  async listFiles(filters: FileQueryFilters = {}): Promise<FileData[]> {
+  async listFiles(filters: FileQueryFilters): Promise<FileData[]> {
     const files = await prisma.file.findMany({
       where: {
         companyId: filters.companyId,
-        status: filters.status,
+        status: filters.status || undefined,
         sizeBytes: {
           gte: filters.minSize ? BigInt(filters.minSize) : undefined,
           lte: filters.maxSize ? BigInt(filters.maxSize) : undefined,
