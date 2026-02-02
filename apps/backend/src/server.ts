@@ -15,16 +15,17 @@ import { closeQueues } from './config/queue';
 import { chunkDeletionService } from './modules/chunks/deletion.service';
 import { logger } from './utils/logger';
 
+// Import routes
+const deviceRoutes = require('./api/routes/devices.routes').default;
+const fileRoutes = require('./api/routes/file.routes').default;
+const paymentRoutes = require('./api/routes/payment.routes').default;
+const authRoutes = require('./api/routes/auth.routes').default;
+const websocketRoutes = require('./api/routes/websocket.routes').default;
+
+
 /**
  * Vyomanaut Backend Server
- * 
- * Architecture:
- * - Express: REST API for companies (upload/download files)
- * - Socket.io: Real-time communication with user devices
- * - PostgreSQL: Persistent storage (chunk locations, device info)
- * - Redis: Fast cache + pub/sub for scaling
  */
-
 class VyomonautServer {
 
   // declare private variables 
@@ -94,12 +95,6 @@ class VyomonautServer {
    * Setup REST API routes
    */
   private setupRoutes(): void {
-    // Import routes
-    const deviceRoutes = require('./api/routes/devices.routes').default;
-    const fileRoutes = require('./api/routes/file.routes').default;
-    const paymentRoutes = require('./api/routes/payment.routes').default;
-    const authRoutes = require('./api/routes/auth.routes').default;
-
 
     // Health check endpoint
     this.app.get('/health', async (req, res) => {
@@ -120,6 +115,7 @@ class VyomonautServer {
 
     // Home Route
     this.app.get('/api/v1', (req, res) => {
+      // Our response
       res.json({
         message: 'Vyomanaut API v1',
         version: '0.1.0',
@@ -139,6 +135,8 @@ class VyomonautServer {
     this.app.use('/api/v1/payments', paymentRoutes);
     // Use authenticate routes 
     this.app.use('/api/v1/auth', authRoutes);
+    // Use Websocket routes
+    this.app.use('/api/v1/websocket', websocketRoutes);
 
 
     // 404 handler
@@ -164,12 +162,14 @@ class VyomonautServer {
    * This is where devices connect and listen for chunk assignments
    */
   private setupWebSocket(): void {
-    // Import device events handler
+    // Websocket imports 
     const { setupDeviceEvents } = require('./websocket/device.events');
+    const { websocketDeviceManager } = require('./websocket/device.manager');
     
-
-    // Initialize chunk distribution service with Socket.io instance
-    // hand the walkie-talkie to all connected devices
+    // All events of chunks require the socket to be connected to the device 
+    // So we simply hand overs the socket walkie-talkie to all managing components
+    
+    // This is the Distribution call for all our Explorers
     chunkDistributionService.setSocketIO(this.io);
 
     // This is the Retrieval call for all our Explorers
@@ -181,6 +181,10 @@ class VyomonautServer {
 
     this.io.on('connection', (socket) => {
       console.log(`🔌 New connection: ${socket.id}`);
+
+      // Log connection stats
+      const stats = websocketDeviceManager.getConnectionStats();
+      console.log(`📊 Active connections: ${stats.totalConnections} (${stats.uniqueDevices} unique devices)`);
 
       // Setup all device-related event handlers for this socket
       setupDeviceEvents(socket);

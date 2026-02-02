@@ -2,6 +2,7 @@ import { Server as SocketIOServer } from 'socket.io';
 import { prisma } from '../../config/database';
 import { getCachedChunkLocations, cacheChunkLocations } from '../../config/redis';
 import { decryptChunk } from '../../utils/crypto';
+import { websocketDeviceManager } from '@/src/websocket/device.manager';
 
 
 
@@ -330,12 +331,14 @@ class ChunkRetrievalService {
   private findDeviceSocket(deviceId: string) {
     if (!this.io) return null;
     
-    // Store the ids from in an array
-    const sockets = Array.from(this.io.sockets.sockets.values());
-    // Did we get him
-    return sockets.find(socket => socket.data.deviceId === deviceId);
+    const socketId = websocketDeviceManager.getSocketFromDeviceId(deviceId);
+    
+    if (!socketId) {
+      return null;
+    }
+    
+    return this.io.sockets.sockets.get(socketId);
   }
-
 
   /**
    * Check if all chunks for a file are available or not at a given moment

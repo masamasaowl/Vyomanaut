@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { authService } from './auth.service';
+import { authService } from '../../modules/auth/auth.service';
 
 /**
  * Authentication Controller

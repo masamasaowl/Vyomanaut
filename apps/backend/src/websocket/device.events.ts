@@ -1,242 +1,157 @@
 import { Socket } from 'socket.io';
-import { deviceService } from '../modules/devices/device.service';
+import { websocketDeviceManager } from './device.manager';
 import {
   DeviceEvent,
-  DeviceRegistrationPayload,
   DevicePingPayload,
-  DeviceRegistrationResponse,
-  DevicePingResponse,
 } from '../types/device.types';
 
-// ========================================
-// Device WebSocket Event Handlers
-// ========================================
 
 /**
- * Think of this like a switchboard operator:
- * - Device sends event → We route it to the right handler
- * - According to the handler the service performs the task → We send response back
+ * Setup WebSocket Device Event Handlers
  * 
- * This gets called when a device connects to our WebSocket server
- *
- * It like a menu to the chef (service)
+ * Events:
+ * 1. Registration
+ * 2. Ping
+ * 3. Storage update
+ * 4. Disconnect
+ * ( Logger events )
+ * 5. Chunk assignment confirmation
+ * 6. Chunk deletion confirmation
  */
 
 export function setupDeviceEvents(socket: Socket): void {
   
-
   // ========================================
-  // EVENT 1. 👶 REGISTER
+  // EVENT 1: DEVICE REGISTRATION
   // ========================================
-  /**
-   * When device first connects, it says:
-   * "Hi! I'm Device ABC, I have 10GB to share!"
-   * 
-   * Flow:
-   * 1. Device sends registration data
-   * 2. We validate it (is data valid?)
-   * 3. We call deviceService to register
-   * 4. We save deviceId to socket (so we know WHO this socket belongs to)
-   * 5. We send success response back
-   */
-  socket.on(DeviceEvent.REGISTER, async (payload: DeviceRegistrationPayload) => {
-
+  
+  // "device:register"
+  // request by client 
+  socket.on(DeviceEvent.REGISTER, async (payload: any) => {
     try {
-      // 1. When data comes log it 
-      console.log(`📱 Device registering:`, {
-        deviceId: payload.deviceId,
-        storage: `${(payload.totalStorageBytes / 1024 / 1024 / 1024).toFixed(2)} GB`,
-      });
-
-      // 2. Validate it (basic checks)
-      if (!payload.deviceId || !payload.totalStorageBytes) {
-
-        // If fails
-        // Tell the client using emit
-        socket.emit(DeviceEvent.REGISTERED, {
-          success: false,
-          message: 'Invalid registration data. deviceId and totalStorageBytes are required.',
-        });
-        return;
-      }
-
-      // 3. Register device in database
-      // uses -> device.service.ts
-      const device = await deviceService.registerDevice(payload);
-
-    
-      // 4. IMPORTANT: Store deviceId in socket's metadata
-      // This way, when THIS specific socket disconnects, we know WHICH device it was!
-      socket.data.deviceId = device.deviceId;
-
-      // 5. Send success response
-      const response: DeviceRegistrationResponse = {
-        success: true,
-        device: {
-          id: device.id,
-          deviceId: device.deviceId,
-          status: device.status,
-          reliabilityScore: device.reliabilityScore,
-          totalEarnings: device.totalEarnings.toString(),
-        },
-        message: 'Device registered successfully! You are now earning! ',
-      };
-
-      // Tell the using emit
-      socket.emit(DeviceEvent.REGISTERED, response);
+      console.log(`📱 Registration request from socket ${socket.id}`);
       
-      console.log(`✅ Device registered successfully: ${device.deviceId}`);
+      // Use device manager for registration
+      const result = await websocketDeviceManager.registerDevice(socket, payload);
+      
+      // Inform client about the result
+      // "device:registered" event
+      socket.emit(DeviceEvent.REGISTERED, result);
+      
+      if (result.success) {
+        console.log(`✅ Device ${payload.deviceId} registered successfully`);
+      } else {
+        console.error(`❌ Registration failed: ${result.message}`);
+      }
       
     } catch (error) {
-      console.error('❌ Error registering device:', error);
+      console.error('❌ Error in registration handler:', error);
       
+      // Registration failure
       socket.emit(DeviceEvent.REGISTERED, {
         success: false,
-        message: 'Failed to register device. Please try again.',
+        message: 'Internal server error during registration'
       });
     }
   });
+  
 
 
   // ========================================
-  // EVENT 2: 💓 Device Heartbeat/Ping 
+  // EVENT 2: HEARTBEAT/PING
   // ========================================
-  /**
-   * 
-   * Every 60 seconds, device sends: "I'm alive! Here's my available storage"
-   * We respond: "Got it! Here's your current status"
-   * 
-   * This is CRITICAL - without heartbeats, we think device is dead!
-   * 
-   * Real-world analogy:
-   * - Like a fitness tracker checking your pulse
-   * - If pulse stops → You're in trouble!
-   * - If device stops pinging → It's offline!
-   */
+  
+  // "device:ping" event 
+  // When device sends us a ping
   socket.on(DeviceEvent.PING, async (payload: DevicePingPayload) => {
     try {
-      const { deviceId, availableStorageBytes } = payload;
-
-      // Update device's heartbeat in database
-      // device.service.ts
-      await deviceService.updateDeviceHeartbeat(deviceId, availableStorageBytes);
-
-      // Get current device info
-      const device = await deviceService.getDevice(deviceId);
-
-      // if doesn't exist return failure
-      if (!device) {
-        socket.emit(DeviceEvent.PONG, {
-          success: false,
-          timestamp: Date.now(),
-        });
-        return;
-      }
-
+      // Use device manager for heartbeat
+      const result = await websocketDeviceManager.handleHeartbeat(socket, payload);
+      
       // Send pong response
-      const response: DevicePingResponse = {
-        success: true,
-        timestamp: Date.now(),
-        status: device.status,
-      };
+      // "device:pong"
+      socket.emit(DeviceEvent.PONG, result);
+      
 
-      socket.emit(DeviceEvent.PONG, response);
-
-
-      // Optional: Log every 10th ping to avoid spam
-      // (In production, you wouldn't log every ping - too noisy!)
+      // Only log occasionally to avoid spam (10% of the time)
       if (Math.random() < 0.1) {
-        console.log(`💓 Heartbeat from ${deviceId}`);
+        console.log(`💓 Heartbeat from ${payload.deviceId}`);
       }
       
     } catch (error) {
-      console.error('❌ Error handling ping:', error);
+      console.error('❌ Error in ping handler:', error);
       
       socket.emit(DeviceEvent.PONG, {
         success: false,
-        timestamp: Date.now(),
+        timestamp: Date.now()
       });
     }
   });
-
+  
 
   // ========================================
-  // EVENT 3: 📊Storage Update  
+  // EVENT 3: STORAGE UPDATE
   // ========================================
-  /**
-   * Device can manually update its available storage anytime
-   * (Maybe user freed up space, or filled it up)
-   * 
-   * This is like: "Hey! I have more/less space now!"
-   */
+  
+  // "device:storage:update" event 
+  // Request sent to us by client
   socket.on(DeviceEvent.STORAGE_UPDATE, async (payload: { availableStorageBytes: number }) => {
-
     try {
 
-      // I know you from the ID stored in socket
+      // Pull the device ID
       const deviceId = socket.data.deviceId;
-
+      
       if (!deviceId) {
-        console.warn('Storage update from unregistered device');
+        console.warn('⚠️ Storage update from unregistered device');
         return;
       }
-
-      // Update storage (reuse heartbeat logic - it does the same thing!)
-      // Just update availableStorageBytes
-      await deviceService.updateDeviceHeartbeat(deviceId, payload.availableStorageBytes);
-
-      console.log(`📊 Storage updated for ${deviceId}: ${(payload.availableStorageBytes / 1024 / 1024 / 1024).toFixed(2)} GB available`);
+      
+      // Reuse heartbeat logic because -> It updates storage too
+      // It's like an unformatted "device:ping" event to the server
+      await websocketDeviceManager.handleHeartbeat(socket, {
+        deviceId,
+        availableStorageBytes: payload.availableStorageBytes
+      });
+      
+      console.log(`📊 Storage updated for ${deviceId}: ${(payload.availableStorageBytes / 1024 / 1024 / 1024).toFixed(2)} GB`);
       
     } catch (error) {
-      console.error('❌ Error updating storage:', error);
+      console.error('❌ Error in storage update handler:', error);
     }
   });
-
+  
 
   // ========================================
-  // EVENT 4: 🔌Device Disconnect  
+  // EVENT 4: DISCONNECTION
   // ========================================
-  /**
-   * When device closes app or loses connection
-   * We need to mark it offline!
-   * 
-   * Important: This is automatic - Socket.io fires this when connection drops
-   */
+  
+  // "disconnect" request by client
   socket.on(DeviceEvent.DISCONNECT, async (reason: string) => {
     try {
 
-      // get the ID
-      const deviceId = socket.data.deviceId;
-
-      if (!deviceId) {
-        console.log('🔌 Unknown device disconnected');
-        return;
-      }
-
-      // Mark device as offline
-      await deviceService.markDeviceOffline(deviceId);
-
-      console.log(`📴 Device disconnected: ${deviceId} (Reason: ${reason})`);
+      // Use device manager for disconnection
+      await websocketDeviceManager.handleDisconnection(socket, reason);
       
     } catch (error) {
-      console.error('❌ Error handling disconnect:', error);
+      console.error('❌ Error in disconnect handler:', error);
     }
   });
-
+  
 
   // ========================================
-  // EVENT 5: 📦Chunk Assignment Confirmation  
+  // EVENT 5: CHUNK CONFIRMATION ( Logging it )
   // ========================================
-  /**
-   * Device confirms it successfully stored a chunk
-   * 
-   * Flow:
-   * 1. Server sends chunk → Device stores it
-   * 2. Device confirms → Server updates database
-   */
-  socket.on('chunk:confirm', async (payload: { chunkId: string; success: boolean; error?: string }) => {
+  
+  // "chunk:confirm" sent by client on successful storage of chunk
+  // Confirmation is handled by distribution service via socket.once()
+  // This is just for logging in the websocket
+  socket.on(DeviceEvent.CHUNK_CONFIRM, async (payload: { 
+    chunkId: string; 
+    success: boolean; 
+    error?: string;
+  }) => {
     try {
-      
+      // Fetch deviceID
       const deviceId = socket.data.deviceId;
       
       if (!deviceId) {
@@ -246,60 +161,26 @@ export function setupDeviceEvents(socket: Socket): void {
       
       if (payload.success) {
         console.log(`✅ Device ${deviceId} confirmed chunk ${payload.chunkId}`);
-        // Confirmation handling is done in distribution service via socket.once()
       } else {
         console.error(`❌ Device ${deviceId} failed to store chunk ${payload.chunkId}: ${payload.error}`);
       }
       
     } catch (error) {
-      console.error('❌ Error handling chunk confirmation:', error);
+      console.error('❌ Error in chunk confirmation handler:', error);
     }
   });
-
-
-
-  // ========================================
-  // EVENT 6: 📤Chunk Retrieval Request   
-  // ========================================
-
-  /**
-   * Server requests a chunk from device
-   * Device sends the chunk data back
-   * 
-   * No handler needed here - it's in the
-   * retrieval.service.ts by 
-   * retrieveChunkFromDevice()
-   
-   * Flow:
-   * 1. Server sends chunk:request → Device reads from local storage
-   * 2. Device sends chunk:data → Server receives encrypted chunk
-   */
   
 
   // ========================================
-  // EVENT 7: 🔺Chunk Deletion Request
+  // EVENT 6: CHUNK DELETION CONFIRMATION ( logging it)
   // ========================================
-
-  /**
-  * EVENT 1: chunk:delete (Server → Device)
-  * Server tells device to delete a chunk
-  * 
-  * EVENT 2: chunk:deleted (Device → Server)
-  * Device confirms deletion
-  * 
-  * It just checks if the event was successful or not 
-  * The actual event is executed by 
-  * deletion.service.ts in
-  * deleteChunkFromDevice() 
-  */
   
-  socket.on('chunk:deleted', async (payload: { 
+  // Deletion confirmation is handled by deletion service via socket.once()
+  socket.on(DeviceEvent.CHUNK_DELETED, async (payload: { 
     chunkId: string; 
     success: boolean; 
     error?: string;
   }) => {
-
-    // extract ID
     try {
       const deviceId = socket.data.deviceId;
       
@@ -308,7 +189,6 @@ export function setupDeviceEvents(socket: Socket): void {
         return;
       }
       
-      // Quick check if the chunk was actually deleted 
       if (payload.success) {
         console.log(`✅ Device ${deviceId} confirmed deletion of chunk ${payload.chunkId}`);
       } else {
@@ -316,28 +196,7 @@ export function setupDeviceEvents(socket: Socket): void {
       }
       
     } catch (error) {
-      console.error('❌ Error handling chunk deletion confirmation:', error);
+      console.error('❌ Error in chunk deletion confirmation handler:', error);
     }
   });
-}
-
-
-
-// ========================================
-// HELPERS    
-// ========================================
-
-/**
- * Get device ID from socket
- * Useful for other modules that need to know which device is connected
- */
-export function getDeviceIdFromSocket(socket: Socket): string | undefined {
-  return socket.data.deviceId;
-}
-
-/**
- * Check if socket belongs to a registered device
- */
-export function isDeviceRegistered(socket: Socket): boolean {
-  return !!socket.data.deviceId;
 }

@@ -156,6 +156,9 @@ export enum DeviceEvent {
   PING = 'device:ping',
   DISCONNECT = 'disconnect',
   STORAGE_UPDATE = 'device:storage:update',
+  CHUNK_CONFIRM = 'chunk:confirm',
+  CHUNK_DELETED = 'chunk:deleted',
+  
   
   // Server -> Client
   REGISTERED = 'device:registered',

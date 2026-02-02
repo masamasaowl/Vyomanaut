@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { earningsService } from './earnings.service';
+import { earningsService } from '../../modules/payments/earnings.service';
 
 /**
  * Payment Controller

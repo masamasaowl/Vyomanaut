@@ -48,7 +48,7 @@ import { healthMonitoringService } from '../replication/health.service';
 class DeviceService {
 
 // ========================================
-// 1. 👶 Register a new device
+// 1. Register a new device
 // ========================================
 
   /**

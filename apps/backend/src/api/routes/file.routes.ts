@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { fileController } from '../../modules/files/file.controller';
+import { fileController } from '../controllers/file.controller';
 import { upload } from '../middleware/upload';
 import { authenticate, authorize } from '../middleware/authenticate';
 import { UserRole } from '@prisma/client';

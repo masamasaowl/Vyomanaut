@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { fileService } from './file.service';
+import { fileService } from '../../modules/files/file.service';
 import { FileQueryFilters } from '../../types/file.types';
 import { FileStatus } from '@prisma/client';
 

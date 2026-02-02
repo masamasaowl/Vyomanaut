@@ -3,6 +3,7 @@ import { config } from '../../config/env';
 import { DeviceEarnings, EarningsBreakdown, SystemPaymentStats } from '../../types/payment.types';
 
 /**
+ * @deprecated
  * Earnings Calculation Service
  * 
  * Responsibilities:

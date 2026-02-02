@@ -7,6 +7,7 @@ import {
   DeleteExcessReplicasJobData,
   DeleteChunkFromDeviceJobData 
 } from '../../types/deletion.types';
+import { websocketDeviceManager } from '@/src/websocket/device.manager';
 
 
 /**
@@ -452,8 +453,13 @@ class ChunkDeletionService {
   private findDeviceSocket(deviceId: string) {
     if (!this.io) return null;
     
-    const sockets = Array.from(this.io.sockets.sockets.values());
-    return sockets.find(socket => socket.data.deviceId === deviceId);
+    const socketId = websocketDeviceManager.getSocketFromDeviceId(deviceId);
+    
+    if (!socketId) {
+      return null;
+    }
+    
+    return this.io.sockets.sockets.get(socketId);
   }
 
 

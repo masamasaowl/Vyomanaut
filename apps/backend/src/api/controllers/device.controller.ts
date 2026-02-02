@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { deviceService } from './device.service';
+import { deviceService } from '../../modules/devices/device.service';
 import { DeviceQueryFilters } from '../../types/device.types';
 import { DeviceStatus } from '@prisma/client';
 

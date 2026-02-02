@@ -1,5 +1,5 @@
 import { Router} from 'express';
-import { deviceController } from '../../modules/devices/device.controller';
+import { deviceController } from '../controllers/device.controller';
 
 /**
  * Device Routes

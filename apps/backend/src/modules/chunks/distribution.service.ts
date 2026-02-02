@@ -2,6 +2,7 @@ import { Server as SocketIOServer } from 'socket.io';
 import { prisma } from '../../config/database';
 import { chunkAssignmentService } from './assignment.service';
 import { temporaryStorageService } from './storage.service';
+import { websocketDeviceManager } from '@/src/websocket/device.manager';
 
 /**
  * Chunk Distribution Service
@@ -263,18 +264,22 @@ class ChunkDistributionService {
   /**
    * Find a device's WebSocket connection
    * 
-   * Uses the socket.data.deviceId we set during registration
+   * Uses the device manager for accurate socket lookup
    */
   private findDeviceSocket(deviceId: string) {
+
+    // Walkie-talkie must be connected  
     if (!this.io) return null;
     
-    // Get all connected sockets
-    // .values() convert to array so we can find
-    // io.sockets -> gather all sockets
-    const sockets = Array.from(this.io.sockets.sockets.values());
+    // Use device manager to get socket ID
+    const socketId = websocketDeviceManager.getSocketFromDeviceId(deviceId);
     
-    // Find socket where socket.data.deviceId matches
-    return sockets.find(socket => socket.data.deviceId === deviceId);
+    if (!socketId) {
+      return null;
+    }
+    
+    // Get actual socket from Socket.IO
+    return this.io.sockets.sockets.get(socketId);
   }
 }
 
