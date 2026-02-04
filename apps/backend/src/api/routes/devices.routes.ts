@@ -1,15 +1,28 @@
 import { Router} from 'express';
 import { deviceController } from '../controllers/device.controller';
+import { authenticate, authorize } from '../middleware/authenticate';
+import { UserRole } from '@prisma/client';
 
 /**
  * Device Routes
- * Count : 6
+ * Count : 7
  * 
  * Maps URLs to controller methods
  * Think of this as a "directory" or "map" of available endpoints
  */
 
 const router: Router  = Router();
+
+/**
+ * POST  /api/v1/register
+ * Register a new device
+ */
+router.post(
+  '/register',
+  authenticate,
+  authorize(UserRole.USER),
+  (req, res) => deviceController.registerDevice(req, res),
+);
 
 /**
  * GET /api/v1/devices
@@ -48,7 +61,11 @@ router.get('/:deviceId/health', (req, res) => deviceController.getDeviceHealth(r
  * POST /api/v1/devices/:deviceId/suspend
  * Suspend a device permanently
  */
-router.post('/:deviceId/suspend', (req, res) => deviceController.suspendDevice(req, res));
-
+router.post(
+  '/:deviceId/suspend',
+  authenticate,
+  authorize(UserRole.ADMIN),
+  (req, res) => deviceController.suspendDevice(req, res),
+);
 
 export default router;

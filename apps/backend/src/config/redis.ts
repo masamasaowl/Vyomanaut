@@ -129,13 +129,6 @@ class RedisManager {
 export const redisManager = new RedisManager();
 
 
-
-
-
-// ================ Helper Functions ================
-
-
-
 // ================== Cache Status ==================
 /**
  * Cache device status
@@ -148,7 +141,7 @@ export const cacheDeviceStatus = async (
   // call client
   const client = await redisManager.getClient();
 
-  // instantly know if a device is online
+ // Instantly know if a device is online
  // store it's ID and status
   await client.setEx(`device:${deviceId}:status`, 90, status);
 };
@@ -169,7 +162,6 @@ export const getCachedDeviceStatus = async (
   // Check if its online!!!
   return status as 'ONLINE' | 'OFFLINE' | null;
 };
-
 
 
 // ================== Cache Locations ===============
@@ -211,7 +203,6 @@ export const invalidateChunkCache = async (chunkId: string): Promise<void> => {
   // delete from memory 
   await client.del(`chunk:${chunkId}:locations`);
 };
-
 
 
 // =============== Track online devices =============

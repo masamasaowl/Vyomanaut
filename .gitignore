@@ -37,3 +37,7 @@ Thumbs.db
 
 # Turborepo
 .turbo
+
+#Cache files
+storage/
+logs/

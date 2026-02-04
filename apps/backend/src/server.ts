@@ -14,6 +14,7 @@ import { healthScheduler } from './workers/healthScheduler';
 import { closeQueues } from './config/queue';
 import { chunkDeletionService } from './modules/chunks/deletion.service';
 import { logger } from './utils/logger';
+import { deviceService } from './modules/devices/device.service';
 
 // Import routes
 const deviceRoutes = require('./api/routes/devices.routes').default;
@@ -32,6 +33,9 @@ class VyomonautServer {
   private app: express.Application;
   private httpServer: ReturnType<typeof createServer>;
   private io: SocketIOServer;
+  // Heartbeat flush timer
+  private heartbeatFlushInterval: NodeJS.Timeout | null = null;
+
 
   // The ON switch
   constructor() {
@@ -65,9 +69,10 @@ class VyomonautServer {
     this.setupGracefulShutdown();
   }
 
-  /**
-   * Setup Express middleware
-   */
+
+  // =================================================
+  // MIDDLEWARES
+  // =================================================
   private setupMiddleware(): void {
     // Security headers
     this.app.use(helmet());
@@ -91,9 +96,10 @@ class VyomonautServer {
     }
   }
 
-  /**
-   * Setup REST API routes
-   */
+
+  // =================================================
+  // ROUTES
+  // =================================================
   private setupRoutes(): void {
 
     // Health check endpoint
@@ -157,28 +163,30 @@ class VyomonautServer {
     });
   }
 
-  /**
-   * Setup WebSocket handlers
-   * This is where devices connect and listen for chunk assignments
-   */
+  // =================================================
+  // WEBSOCKET HANDLERS
+  // =================================================
   private setupWebSocket(): void {
+
     // Websocket imports 
     const { setupDeviceEvents } = require('./websocket/device.events');
     const { websocketDeviceManager } = require('./websocket/device.manager');
+
+    // Every incoming socket must be authenticated here by the JWT middleware
+    const { setupSocketAuth } = require('./websocket/device.manager');
+    setupSocketAuth(this.io);
     
-    // All events of chunks require the socket to be connected to the device 
-    // So we simply hand overs the socket walkie-talkie to all managing components
+    // Hand over the socket walkie-talkie to components to socket events
     
     // This is the Distribution call for all our Explorers
     chunkDistributionService.setSocketIO(this.io);
-
     // This is the Retrieval call for all our Explorers
     chunkRetrievalService.setSocketIO(this.io);
-
     // This is the termination call for all the devices          
     chunkDeletionService.setSocketIO(this.io);
 
 
+    // The Handshake happens
     this.io.on('connection', (socket) => {
       console.log(`🔌 New connection: ${socket.id}`);
 
@@ -186,9 +194,29 @@ class VyomonautServer {
       const stats = websocketDeviceManager.getConnectionStats();
       console.log(`📊 Active connections: ${stats.totalConnections} (${stats.uniqueDevices} unique devices)`);
 
-      // Setup all device-related event handlers for this socket
+      // Setup all event handlers when the socket starts
       setupDeviceEvents(socket);
     });
+
+
+    // Start Periodic heartbeat flush to Postgres every 120 seconds
+    this.heartbeatFlushInterval = setInterval(async () => {
+      // Fetch all the devices connected to the websocket 
+      const devices = websocketDeviceManager.getConnectedDevices();
+
+      // Iterate over all the connected devices
+      for (const dev of devices) {
+        try {
+          // Update the DB with a single Db call
+          await deviceService.flushHeartbeatToDB(
+            dev.deviceId,
+            dev.availableStorageBytes,
+          );
+        } catch (err) {
+          console.error(`❌ Heartbeat flush failed for ${dev.deviceId}:`, err);
+        }
+      }
+    }, 120_000); // 120 seconds
 
     console.log('🔌 WebSocket server initialized');
   }
@@ -200,6 +228,12 @@ class VyomonautServer {
   private setupGracefulShutdown(): void {
     const shutdown = async (signal: string) => {
       console.log(`\n📡 ${signal} received, shutting down gracefully...`);
+
+      // Stop the heartbeat flush timer
+      if (this.heartbeatFlushInterval) {
+        clearInterval(this.heartbeatFlushInterval);
+        console.log('⏹️  Heartbeat flush timer stopped');
+      }
 
       // Stop accepting new http requests
       this.httpServer.close(() => {

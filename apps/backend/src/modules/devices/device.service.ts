@@ -52,14 +52,19 @@ class DeviceService {
 // ========================================
 
   /**
-   * Flow:
-   * 1. Check if device already exists (by deviceId)
-   * 2. If exists -> update its info and mark ONLINE
-   * 3. If new -> create new record
-   * 4. Cache the status in Redis for fast lookups
+   * Called by:
+   *   - POST /api/v1/devices/register  (first-time REST registration)
+   *   - device.manager.ts              (WebSocket re-registration after reconnect)
+   *
+   * Algorithm:
+   *   - Single prisma.upsert keyed on the unique `deviceId` column.
+   *   - On UPDATE we only recompute reliability when the device was previously OFFLINE
+   *   - BigInt conversion happens once at the boundary
+   *
+   * @param payload  Validated registration payload (from controller or manager)
+   * @returns        Converted DeviceData ready for JSON responses
    */
   async registerDevice(payload: DeviceRegistrationPayload): Promise<DeviceData> {
-
     // from device.types.ts
     const {
       deviceId,
@@ -73,29 +78,27 @@ class DeviceService {
       throw new Error('Device must offer at least 1GB of storage');
     }
 
-    // If device was offline, calculate how long was it used during reconnecting (🌅 Awakening)
-    // look for device
-    const existingDevice = await prisma.device.findUnique({
+    // We check if the device was already registered
+    const existing = await prisma.device.findUnique({
       where: { deviceId },
     });
 
     // offline check
-    const wasOffline = existingDevice?.status === DeviceStatus.OFFLINE;
+    const wasOffline = existing?.status === DeviceStatus.OFFLINE;
 
-    // If device was offline, calculate how long (for 🌅 Awakening)
-    // add to downtime 
+    // If device was offline, calculate how long to increase downtime 
     let additionalDowntime = BigInt(0);
 
     // If device was offline
-    if (wasOffline && existingDevice) {
+    if (wasOffline && existing) {
       const now = new Date();
-      const downSince = existingDevice.lastSeenAt;
+      const downSince = existing.lastSeenAt;
 
       // calculate downtime using last seen
       additionalDowntime = BigInt(now.getTime() - downSince.getTime());
     }
 
-    // upsert -> update or insert new
+    // Upsert -> update or insert new
     const device = await prisma.device.upsert({
 
       // Try to find existing device
@@ -108,20 +111,15 @@ class DeviceService {
         totalStorageBytes: BigInt(totalStorageBytes),
         availableStorageBytes: BigInt(totalStorageBytes),
         
-        // 🌅 AWAKENING: Add downtime since it went offline
-        totalDowntime: wasOffline && existingDevice
-          ? existingDevice.totalDowntime + additionalDowntime
-          : undefined,
-        
-        // Reliability score would change when he comes back again
-        reliabilityScore: wasOffline && existingDevice
-          ? this.calculateReliabilityScore(
-
-              // this function is will return just that
-              existingDevice.totalUptime,
-              existingDevice.totalDowntime + additionalDowntime
-            )
-          : undefined,
+        ...(wasOffline && existing
+          ? {
+              totalDowntime: existing.totalDowntime + additionalDowntime,
+              reliabilityScore: this.calculateReliabilityScore(
+                existing.totalUptime,
+                existing.totalDowntime + additionalDowntime,
+              ),
+            }
+          : {}),
       },
       
       // If not found
@@ -153,7 +151,7 @@ class DeviceService {
     // helper logs
     if (wasOffline) {
       console.log(`🌅 Device awakened: ${deviceId} (was offline for ${(Number(additionalDowntime) / 1000 / 60).toFixed(2)} minutes)`);
-    } else if (existingDevice) {
+    } else if (existing) {
       console.log(`🔄 Device reconnected: ${deviceId}`);
     } else {
       console.log(`👶 New device born: ${deviceId}`);
@@ -164,27 +162,25 @@ class DeviceService {
   }
 
 
-
   // ========================================
-  // 2. 💓 LIFE - Handle Heartbeats
+  // 2. Flush Heartbeats
   // ========================================
 
   /**
-   * Update device's heartbeat (called every 60 seconds)
-   * -> it's how we know device is alive!
-   * 
+   * This works together with the websocket/device.manager.ts
+   * It is called to flush the last known state to DB while the manager stores the ping in Redis
+   *  
    * Flow:
-   * 1. Update lastSeenAt timestamp
-   * 2. Update availableStorageBytes (might have changed)
-   * 3. Update Redis cache
-   * 4. Calculate uptime since last ping
+   * 1. Called by the manager in a set duration
+   * 2. Calculates the uptime 
+   * 3. Writes to the DB
    */
-  async updateDeviceHeartbeat(
+  async flushHeartbeatToDB(
     deviceId: string,
     availableStorageBytes: number
   ): Promise<void> {
 
-    // Check that device! Yo! (you know his ID)
+    // Check that device
     const device = await prisma.device.findUnique({
       where: { deviceId },
     });
@@ -195,9 +191,8 @@ class DeviceService {
 
     // Things we need to update
     const now = new Date();
-    const lastSeen = device.lastSeenAt;
-    // Check the time gap
-    const timeSinceLastSeen = now.getTime() - lastSeen.getTime();
+    // Update the uptime 
+    const uptimeDelta = BigInt(now.getTime() - device.lastSeenAt.getTime());
 
 
     // Update device in DB
@@ -207,33 +202,26 @@ class DeviceService {
         lastSeenAt: now,
         availableStorageBytes: BigInt(availableStorageBytes),
         status: DeviceStatus.ONLINE,
-        
-        // Add to uptime (device was alive during this period)
-        totalUptime: device.totalUptime + BigInt(timeSinceLastSeen),
+        totalUptime: device.totalUptime + uptimeDelta,
       },
     });
-
-    // Update cache
-    await cacheDeviceStatus(deviceId, DeviceStatus.ONLINE);
-    await updateDeviceLastSeen(deviceId);
   }
 
 
   // ========================================
-  // 3. 😴 SLEEP - Mark Offline
+  // 3. Mark Offline
   // ========================================
 
   /**
-   * Called when:
-   * - Device disconnects from WebSocket
-   * - Device hasn't pinged in 90+ seconds (detected by background worker)
+   * Called by device.manager on WebSocket disconnect
    * 
-   * Important: We DON'T immediately remove chunks!
-   * Device might come back online soon (phone locked screen, network hiccup)
+   * Triggers async health-check for chunks on this device.
+   *
+   * @param deviceId  device identifier
    */
   async markDeviceOffline(deviceId: string): Promise<void> {
 
-    // Who are you
+    // Who was it
     const device = await prisma.device.findUnique({
       where: { deviceId },
     });
@@ -243,58 +231,54 @@ class DeviceService {
       return;
     }
 
-    // Update DB if device comes back online 
-    // Why? 
-    // We don't bother if you were offline but whenever you make a return 
-    // we update your status, reliability score & total downtime 
-    if (device.status === DeviceStatus.ONLINE) {
-      const now = new Date();
-      const lastSeen = device.lastSeenAt;
-      const timeSinceLastSeen = now.getTime() - lastSeen.getTime();
-
-      // Add to downtime using last seen
-      const newTotalDowntime = device.totalDowntime + BigInt(timeSinceLastSeen);
-
-      // Update device with new reliability score & downtime 
-      await prisma.device.update({
-        where: { deviceId },
-        data: {
-
-          // You'll be considered online only in the next ping☺️
-          status: DeviceStatus.OFFLINE,
-          lastSeenAt: now,
-          totalDowntime: newTotalDowntime,
-          
-          // Recalculate reliability score
-          reliabilityScore: this.calculateReliabilityScore(
-            device.totalUptime,
-            newTotalDowntime
-          ),
-        },
-      });
-
-      // Update cache
-      await cacheDeviceStatus(deviceId, DeviceStatus.OFFLINE);
-
-      console.log(`😴 Device fell asleep: ${deviceId}`);
-
-
-      // TRIGGER HEALTH CHECK!
-      // When device goes offline, check which chunks are affected
-      // and queue healing jobs if needed
-      setImmediate(async () => {
-        try {
-          await healthMonitoringService.detectAffectedChunks(device.id);
-        } catch (error) {
-          console.error(`❌ Failed to detect affected chunks for ${deviceId}:`, error);
-        }
-      });
+    // Current state in DB -> Device is ONLINE
+    // Only act if the device is actually transitioning from ONLINE
+    if (device.status !== DeviceStatus.ONLINE) {
+      console.log(`  ℹ️  Device ${deviceId} already ${device.status}, skipping`);
+      return;
     }
+
+    // We calculate the uptime before signing you off
+    const now = new Date();
+    const uptimeDelta = BigInt(now.getTime() - device.lastSeenAt.getTime());
+
+
+    // Update the device going to sleep in DB
+    await prisma.device.update({
+      where: { deviceId },
+      data: {
+        status: DeviceStatus.OFFLINE,
+        lastSeenAt: now,
+        totalUptime: device.totalUptime + uptimeDelta,   // credit uptime up to disconnect
+        totalDowntime: device.totalDowntime,
+        reliabilityScore: this.calculateReliabilityScore(
+          device.totalUptime + uptimeDelta,
+          device.totalDowntime,
+        ),
+      },
+    });
+
+    // Update cache
+    await cacheDeviceStatus(deviceId, DeviceStatus.OFFLINE);
+
+    console.log(`😴 Device went offline: ${deviceId}`);
+
+
+    // TRIGGER HEALTH CHECK!
+    // When device goes offline, check which chunks are affected
+    // and queue healing jobs if needed
+    setImmediate(async () => {
+      try {
+        await healthMonitoringService.detectAffectedChunks(device.id);
+      } catch (error) {
+        console.error(`❌ Failed to detect affected chunks for ${deviceId}:`, error);
+      }
+    });
   }
 
 
   // ========================================
-  // 4. 👋 BYE - Suspend Device (New!)
+  // 4. Suspend Device
   // ========================================
 
   /**
@@ -308,7 +292,10 @@ class DeviceService {
    * Suspended devices:
    * - Won't receive new chunk assignments
    * - Existing chunks are re-replicated to other devices
-   * - Can be reactivated by re-registering
+   * - Can only be reactivated by re-registering
+   * 
+   * @param deviceId  Unique device identifier
+   * @param reason    Human-readable suspension reason (logged only)
    */
   async suspendDevice(deviceId: string, reason?: string): Promise<void> {
 
@@ -321,29 +308,29 @@ class DeviceService {
       throw new Error(`Device ${deviceId} not found`);
     }
 
-    // If device was online, track the downtime
-    // calculate the final updates
+  
+    // Calculate the final updates
     const now = new Date();
     let additionalDowntime = BigInt(0);
     
+    // By default device might be set to online in our DB
     if (device.status === DeviceStatus.ONLINE) {
-      const lastSeen = device.lastSeenAt;
-      additionalDowntime = BigInt(now.getTime() - lastSeen.getTime());
+      additionalDowntime = BigInt(now.getTime() - device.lastSeenAt.getTime());
     }
+
+    // Your final downtime
+    const finalDowntime = device.totalDowntime + additionalDowntime;
 
     // It's a goodbye my friend
     await prisma.device.update({
-      where: { id: device.id }, // FIX: Use id, not deviceId
+      where: { id: device.id },
       data: {
-        // 👋 BYE
         status: DeviceStatus.SUSPENDED,
         lastSeenAt: now,
-        totalDowntime: device.totalDowntime + additionalDowntime,
-        
-        // Update reliability
+        totalDowntime: finalDowntime,
         reliabilityScore: this.calculateReliabilityScore(
           device.totalUptime,
-          device.totalDowntime + additionalDowntime
+          finalDowntime,
         ),
       },
     });
@@ -382,6 +369,8 @@ class DeviceService {
    * - 80% uptime = 80 score
    * - 50% uptime = 50 score
    * 
+   * brand-new device has 0/0 → returns 100
+   * 
    * Note -> Score affects chunk assignment priority!
    */
 
@@ -412,6 +401,7 @@ class DeviceService {
   // ========================================
   /**
    * Calculate device health metrics
+   * We only read into DB
    * 
    * This determines if device is reliable enough to store chunks
    * 
@@ -512,7 +502,7 @@ class DeviceService {
   }
 
   // ========================================
-  // 8. Get Device
+  // 8. Get Device from DB (Read only)
   // ========================================
 
   async getDevice(deviceId: string): Promise<DeviceData | null> {
@@ -525,7 +515,7 @@ class DeviceService {
 
 
   // ========================================
-  // 9. To find those few perfect devices
+  // 9. List device with filters (Read only)
   // ========================================
 
   async listDevices(filters: DeviceQueryFilters = {}): Promise<DeviceSummary[]> {
