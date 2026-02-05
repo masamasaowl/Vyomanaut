@@ -22,21 +22,24 @@ import {
 export function setupDeviceEvents(socket: Socket): void {
   
   // ========================================
-  // EVENT 1: DEVICE REGISTRATION
+  // EVENT 1: DEVICE CONNECTION 
   // ========================================
   
-  // "device:register"
+  // "device:connect"
   // request by client 
-  socket.on(DeviceEvent.REGISTER, async (payload: any) => {
+  socket.on(DeviceEvent.CONNECT, async (payload: {
+    deviceId: string;
+    availableStorageBytes?: number;
+  }) => {
     try {
       console.log(`📱 Registration request from socket ${socket.id}`);
       
       // Use device manager for registration
-      const result = await websocketDeviceManager.registerDevice(socket, payload);
+      const result = await websocketDeviceManager.connectDevice(socket, payload);
       
       // Inform client about the result
       // "device:registered" event
-      socket.emit(DeviceEvent.REGISTERED, result);
+      socket.emit(DeviceEvent.CONNECTED, result);
       
       if (result.success) {
         console.log(`✅ Device ${payload.deviceId} registered successfully`);
@@ -48,7 +51,7 @@ export function setupDeviceEvents(socket: Socket): void {
       console.error('❌ Error in registration handler:', error);
       
       // Registration failure
-      socket.emit(DeviceEvent.REGISTERED, {
+      socket.emit(DeviceEvent.CONNECTED, {
         success: false,
         message: 'Internal server error during registration'
       });

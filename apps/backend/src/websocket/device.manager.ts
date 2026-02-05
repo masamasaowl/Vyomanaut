@@ -110,9 +110,11 @@ class WebSocketDeviceManager {
   // ========================================
   
   /**
-   * Register a device via WebSocket
+   * Connect device to websocket 
    * 
-   * This is called when client emits 'device:register' event
+   * This is called when client emits 'device:connect' event
+   * 
+   * Device is already registered by device.service.ts
    * 
    * Flow:
    * 1. Validate payload
@@ -125,16 +127,11 @@ class WebSocketDeviceManager {
    * @param payload Contains the incoming device info from frontend 
    * @returns success boolean, device info and message 
    */
-  async registerDevice(
+  async connectDevice(
     socket: Socket,
     payload: {
       deviceId: string;
-      userId: string;
-      deviceType: 'ANDROID' | 'IOS' | 'DESKTOP' | 'MACOS' | 'LINUX';
-      totalStorageBytes: number;
-      model?: string;
-      osVersion?: string;
-      appVersion?: string;
+      availableStorageBytes?: number;
     }
   ): Promise<{
     success: boolean;
@@ -143,62 +140,69 @@ class WebSocketDeviceManager {
   }> {
     
     try {
-      console.log(`📱 Registering device ${payload.deviceId} via WebSocket...`);
+      const { deviceId } = payload;
+
+      console.log(`📱 Connecting device ${deviceId} via WebSocket...`);
       
-      // 1. Validate payload
-      // We check the four mandatory fields
-      const validation = this.validateRegistration(payload);
-      if (!validation.valid) {
+
+      // 1. Verify ownership
+      // If the user has registered then his userID must exist in the socket 
+      const userId = socket.data.userId;
+      if (!userId) {
+        return { success: false, message: 'Not authenticated' };
+      }
+
+      // 2. Fetch the device from DB 
+      const device = await deviceService.getDevice(deviceId);
+
+      // Validate the device
+      if (!device) {
         return {
           success: false,
-          message: validation.error!
+          message: `Device ${deviceId} not found. Please register via REST API first.`
+        };
+      }
+      if (device.userId !== userId) {
+        return {
+          success: false,
+          message: 'Device does not belong to authenticated user'
         };
       }
 
-      // 2. Authenticate the connector 
-      // socket.data.userId was set by the auth middleware from the JWT.
-      // The client must also send the matching userId in the payload
-      if (socket.data.userId !== payload.userId) {
-        console.warn(
-          `🚨 Ownership mismatch on socket ${socket.id}: ` +
-          `JWT says ${socket.data.userId}, payload says ${payload.userId}`,
-        );
-        return { success: false, message: 'Authenticated user does not match payload userId' };
-      }
+      // 3. Update device status to ONLINE in DB
+      // Heartbeats would be cached only in Redis
+      await deviceService.flushHeartbeatToDB(
+        deviceId,
+        payload.availableStorageBytes || device.availableStorageBytes
+      );
 
-
-      // 3. This is direct registration via websocket 
-      // The DB write is done by the service
-      const deviceData = await deviceService.registerDevice({
-        deviceId:          payload.deviceId,
-        deviceType:        payload.deviceType,
-        userId:           payload.userId,
-        totalStorageBytes: payload.totalStorageBytes,
-      });
-      
 
       // 4. Map socket to device
       // This is where we link the device details the moment it connects to us via socketID
-      this.mapSocketToDevice(socket, payload.deviceId, payload.userId, payload.totalStorageBytes);
-    
+      this.mapSocketToDevice(
+        socket,
+        deviceId,
+        userId,
+        payload.availableStorageBytes || device.availableStorageBytes
+      );
 
-      // 5. Store deviceId in socket metadata
-      // This is not mapping but assigning the value directly
-      // By this the connected socket could be easily extracted with these data  
-      socket.data.deviceId = payload.deviceId;
+      // 5. Update Redis cache
+      await cacheDeviceStatus(deviceId, DeviceStatus.ONLINE);
+      await updateDeviceLastSeen(deviceId);
+    
       
-      console.log(`  ✅ Device ${payload.deviceId} registered successfully`);
+      console.log(`  ✅ Device ${deviceId} connected  successfully via websocket`);
       
       return {
         success: true,
         device: {
-          id:               deviceData.id,
-          deviceId:         deviceData.deviceId,
-          status:           deviceData.status,
-          reliabilityScore: deviceData.reliabilityScore,
-          totalEarnings:    String(deviceData.totalEarnings),
+          id: device.id,
+          deviceId: device.deviceId,
+          status: DeviceStatus.ONLINE,
+          reliabilityScore: device.reliabilityScore,
+          totalEarnings: String(device.totalEarnings),
         },
-        message: 'Device registered successfully',
+        message: 'Device connected successfully',
       };
 
     } catch (error) {
@@ -222,9 +226,8 @@ class WebSocketDeviceManager {
    * 2. availableStorage
    * 3. uptime
    *
-   * The periodic flush to DB is handled externally
-   * (see server.ts startup where a setInterval calls
-   *  deviceService.flushHeartbeatToDB)
+   * The periodic flush to DB is handled by server.ts 
+   * from deviceService.flushHeartbeatToDB every 120s
    *
    * @param socket our Websocket 
    * @param payload Has the deviceId and storage
@@ -258,13 +261,10 @@ class WebSocketDeviceManager {
           timestamp: Date.now()
         };
       }
-      if(mapping.deviceId != payload.deviceId){
-        console.error(`Stored deviceID and ping deviceID don't match`);
-      }
 
       // 3. Update the map
       mapping.lastSeenAt = new Date();
-      mapping.availableStorageBytes   = payload.availableStorageBytes;
+      mapping.availableStorageBytes = payload.availableStorageBytes;
 
       // 4. We write the updates to Redis
       // SETEX 90 s
@@ -422,49 +422,6 @@ class WebSocketDeviceManager {
       uniqueDevices: new Set(devices.map(d => d.deviceId)).size,
       devices
     };
-  }
-  
-
-  // ========================================
-  // VALIDATION
-  // ========================================
-  /**
-   * Validate device registration payload
-   * Checks the four required fields in device registration
-   */
-  private validateRegistration(payload: any): {
-    valid: boolean;
-    error?: string;
-  } {
-    
-    if (!payload.deviceId) {
-      return { valid: false, error: 'deviceId is required' };
-    }
-    
-    if (!payload.userId) {
-      return { valid: false, error: 'userId is required' };
-    }
-    
-    if (!payload.deviceType) {
-      return { valid: false, error: 'deviceType is required' };
-    }
-    
-    if (!payload.totalStorageBytes || payload.totalStorageBytes < 1073741824) {
-      return { 
-        valid: false, 
-        error: 'Device must offer at least 1GB of storage' 
-      };
-    }
-    
-    const validTypes = ['ANDROID', 'IOS', 'DESKTOP', 'MACOS', 'LINUX'];
-    if (!validTypes.includes(payload.deviceType)) {
-      return { 
-        valid: false, 
-        error: `deviceType must be one of: ${validTypes.join(', ')}` 
-      };
-    }
-    
-    return { valid: true };
   }
 }
 

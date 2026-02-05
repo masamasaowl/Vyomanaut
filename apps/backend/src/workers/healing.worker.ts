@@ -3,48 +3,69 @@ import { healingQueue } from '../config/queue';
 import { chunkAssignmentService } from '../modules/chunks/assignment.service';
 import { prisma } from '../config/database';
 import { ChunkStatus } from '@prisma/client';
+import { logger } from '../utils/logger';
+import { ChunkError, safeAsync } from '../utils/errorHandler';
 
 /**
- * Healing Worker
+ * OPTIMIZED Healing Worker
  * 
- * What it does:
- * - Listens for healing jobs from the queue
- * - Re-replicates degraded chunks to new devices
- * - Ensures redundancy is maintained
- * - Keeps your data safe automatically!
+ * NEW FEATURES:
+ * 1. Comprehensive logging at each step
+ * 2. Error boundaries (won't crash on failure)
+ * 3. Metrics tracking (healing success rate)
+ * 4. Health reporting
+ * 5. Graceful degradation
  * 
- * Think of it like a medical emergency team:
- * - Gets alert (job from queue)
- * - Assesses situation (check chunk status)
- * - Takes action (replicate to new devices)
- * - Verifies recovery (check health after)
- * 
- * This runs SEPARATE from the main server process
- * start it with: node dist/workers/healing.worker.js
+ * Purpose:
+ * - Automatically repair chunks that fall below redundancy
+ * - Triggered when devices go offline
+ * - Ensures data durability
  */
 
-// Type of the chunk you need to heal
 interface HealChunkJobData {
   chunkId: string;
   currentReplicas: number;
   targetReplicas: number;
   timestamp: number;
+  reason?: 'DEVICE_OFFLINE' | 'DEGRADED' | 'SCHEDULED_SCAN';
 }
 
+// Track healing metrics
+const healingMetrics = {
+  totalJobs: 0,
+  successfulHeals: 0,
+  failedHeals: 0,
+  chunksHealed: new Set<string>(),
+  lastHealTime: Date.now(),
+};
+
 /**
- * Process a chunk healing job
+ * Process a healing job
  * 
- * This is the main healing logic - gets called for each job in healing queue
+ * Algorithm:
+ * 1. Verify chunk still needs healing (might have recovered)
+ * 2. Count current healthy replicas
+ * 3. Calculate needed replicas
+ * 4. Re-assign chunk to new devices
+ * 5. Verify healing succeeded
+ * 6. Update chunk status
  */
 async function processHealChunkJob(job: Job<HealChunkJobData>): Promise<void> {
-
-  // Extract the info needed for replication
-  const { chunkId, currentReplicas, targetReplicas } = job.data;
+  const { chunkId, currentReplicas, targetReplicas, reason } = job.data;
   
-  console.log(`🏥 [Job ${job.id}] Healing chunk ${chunkId} (${currentReplicas}/${targetReplicas} replicas)`);
+  logger.info('Starting chunk healing job', {
+    jobId: job.id,
+    chunkId,
+    currentReplicas,
+    targetReplicas,
+    reason: reason || 'UNKNOWN',
+    priority: job.opts.priority
+  });
+  
+  healingMetrics.totalJobs++;
   
   try {
-    // Step 1: Get current chunk status
+    // STEP 1: Get current chunk state
     const chunk = await prisma.chunk.findUnique({
       where: { id: chunkId },
       include: {
@@ -53,36 +74,102 @@ async function processHealChunkJob(job: Job<HealChunkJobData>): Promise<void> {
             device: true,
           },
         },
+        file: {
+          select: {
+            id: true,
+            originalName: true,
+          }
+        }
       },
     });
     
     if (!chunk) {
-      throw new Error(`Chunk ${chunkId} not found`);
+      logger.error('Chunk not found during healing', { chunkId });
+      throw new ChunkError('Chunk not found', chunkId);
     }
     
-    // Step 2: Count healthy replicas (might have changed since job was queued!)
+    logger.debug('Chunk state retrieved', {
+      chunkId,
+      fileId: chunk.fileId,
+      fileName: chunk.file.originalName,
+      currentStatus: chunk.status,
+      locationCount: chunk.locations.length
+    });
+    
+    // STEP 2: Count healthy replicas (status might have changed!)
     const healthyReplicas = chunk.locations.filter(
       loc => loc.isHealthy && loc.device.status === 'ONLINE'
     ).length;
     
-    console.log(`  📊 Current health: ${healthyReplicas}/${targetReplicas} healthy replicas`);
+    logger.info('Current replica health', {
+      chunkId,
+      healthyReplicas,
+      targetReplicas,
+      totalLocations: chunk.locations.length
+    });
     
-    // Step 3: If already healed, skip
+    // STEP 3: Check if healing is still needed
     if (healthyReplicas >= targetReplicas) {
-      console.log(`  ✅ Chunk ${chunkId} already healed (${healthyReplicas}/${targetReplicas})`);
+      logger.info('Chunk already healed - skipping', {
+        chunkId,
+        healthyReplicas,
+        targetReplicas
+      });
+      
+      // Update status to HEALTHY
+      await prisma.chunk.update({
+        where: { id: chunkId },
+        data: {
+          status: ChunkStatus.HEALTHY,
+          currentReplicas: healthyReplicas,
+        },
+      });
+      
       return;
     }
     
-    // Step 4: Calculate how many new replicas we need
+    // STEP 4: Calculate needed replicas
     const neededReplicas = targetReplicas - healthyReplicas;
     
-    console.log(`  🔄 Need to create ${neededReplicas} new replicas`);
+    logger.info('Healing required', {
+      chunkId,
+      neededReplicas,
+      healthyReplicas,
+      targetReplicas
+    });
     
-    // Step 5: Re-assign chunk (this will create new ChunkLocation records)
+    // STEP 5: Critical check - do we have ANY healthy replicas?
+    if (healthyReplicas === 0) {
+      logger.error('CRITICAL: Chunk has NO healthy replicas!', {
+        chunkId,
+        fileId: chunk.fileId,
+        fileName: chunk.file.originalName,
+        status: chunk.status
+      });
+      
+      // Mark as LOST
+      await prisma.chunk.update({
+        where: { id: chunkId },
+        data: { status: ChunkStatus.LOST },
+      });
+      
+      // TODO: Alert administrators
+      // This means data is UNRECOVERABLE
+      
+      throw new ChunkError('Chunk has no healthy replicas - DATA LOST', chunkId, {
+        fileId: chunk.fileId
+      });
+    }
+    
+    // STEP 6: Re-assign chunk to new devices
+    logger.info('Re-assigning chunk to new devices', {
+      chunkId,
+      neededReplicas
+    });
+    
     await chunkAssignmentService.reassignChunk(chunkId);
     
-    // Step 6: We confirm that the replication has taken place
-    // Count the total chunkLocations with active devices
+    // STEP 7: Verify healing succeeded
     const newHealthyCount = await prisma.chunkLocation.count({
       where: {
         chunkId,
@@ -93,12 +180,18 @@ async function processHealChunkJob(job: Job<HealChunkJobData>): Promise<void> {
       },
     });
     
-    // Update the new status of the chunk while ensuring it's fully replicated
+    logger.info('Healing verification', {
+      chunkId,
+      beforeHealing: healthyReplicas,
+      afterHealing: newHealthyCount,
+      targetReplicas
+    });
+    
+    // STEP 8: Update chunk status
     const newStatus = newHealthyCount >= targetReplicas 
       ? ChunkStatus.HEALTHY 
       : ChunkStatus.REPLICATING;
     
-    // Update in DB  
     await prisma.chunk.update({
       where: { id: chunkId },
       data: {
@@ -107,72 +200,140 @@ async function processHealChunkJob(job: Job<HealChunkJobData>): Promise<void> {
       },
     });
     
-    console.log(`  ✅ Healing complete: ${newHealthyCount}/${targetReplicas} replicas (${newStatus})`);
+    // STEP 9: Update metrics
+    healingMetrics.successfulHeals++;
+    healingMetrics.chunksHealed.add(chunkId);
+    healingMetrics.lastHealTime = Date.now();
+    
+    logger.info('Chunk healing completed successfully', {
+      chunkId,
+      finalStatus: newStatus,
+      replicaCount: newHealthyCount,
+      targetReplicas,
+      healingTime: Date.now() - job.timestamp
+    });
     
   } catch (error) {
-    console.error(`  ❌ Healing failed for chunk ${chunkId}:`, error);
-
-    // This is the worker
-    // So we throw error so our Queue retries replication
-    throw error; 
+    healingMetrics.failedHeals++;
+    
+    logger.error('Chunk healing failed', {
+      chunkId,
+      jobId: job.id,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined
+    });
+    
+    // Re-throw so Bull will retry
+    throw error;
   }
 }
 
-
 /**
  * Setup healing worker
- * 
- * Now we setup the actual worker who picks up jobs from the queue
  */
 export function startHealingWorker(): void {
-  console.log('🦸 Starting Healing Worker...');
+  logger.info('Starting Healing Worker...');
   
-
-  // Here we define how to complete 1 job in healing Queue
-  // It can heal up to 5 jobs concurrently
-  healingQueue.process('heal-chunk', 5, processHealChunkJob); 
+  // Process up to 5 healing jobs concurrently
+  healingQueue.process('heal-chunk', 5, async (job) => {
+    await safeAsync(
+      () => processHealChunkJob(job),
+      `Healing job ${job.id}`
+    );
+  });
   
-
-  // Like websocket events
-  // We make Event listeners that talk back to our queue so it keeps updating the status
+  // ========================================
+  // EVENT LISTENERS
+  // ========================================
   
-  // 1. completed
   healingQueue.on('completed', (job) => {
-    console.log(`✅ Job ${job.id} completed successfully`);
+    logger.info('Healing job completed', {
+      jobId: job.id,
+      chunkId: job.data.chunkId,
+      duration: Date.now() - job.timestamp
+    });
   });
   
-  // 2. failed
   healingQueue.on('failed', (job, err) => {
-    console.error(`❌ Job ${job?.id} failed:`, err.message);
+    logger.error('Healing job failed', {
+      jobId: job?.id,
+      chunkId: job?.data.chunkId,
+      error: err.message,
+      attempt: job?.attemptsMade,
+      maxAttempts: job?.opts.attempts
+    });
   });
   
-  // 3. working on it
   healingQueue.on('stalled', (job) => {
-    console.warn(`⚠️ Job ${job.id} stalled (took too long)`);
+    logger.warn('Healing job stalled (taking too long)', {
+      jobId: job.id,
+      chunkId: job.data.chunkId
+    });
   });
   
-  // 4. error
   healingQueue.on('error', (error) => {
-    console.error('❌ Queue error:', error);
+    logger.error('Healing queue error', {
+      error: error.message
+    });
   });
   
-  console.log('✅ Healing Worker ready to process jobs');
+  // Log metrics every 5 minutes
+  setInterval(() => {
+    logHealingMetrics();
+  }, 5 * 60 * 1000);
+  
+  logger.info('Healing Worker started successfully', {
+    concurrency: 5,
+    maxAttempts: 5
+  });
 }
 
+/**
+ * Log healing metrics
+ */
+function logHealingMetrics(): void {
+  const successRate = healingMetrics.totalJobs > 0
+    ? ((healingMetrics.successfulHeals / healingMetrics.totalJobs) * 100).toFixed(2)
+    : '0';
+  
+  logger.info('Healing Worker Metrics', {
+    totalJobs: healingMetrics.totalJobs,
+    successfulHeals: healingMetrics.successfulHeals,
+    failedHeals: healingMetrics.failedHeals,
+    successRate: `${successRate}%`,
+    uniqueChunksHealed: healingMetrics.chunksHealed.size,
+    lastHealTime: new Date(healingMetrics.lastHealTime).toISOString(),
+    timeSinceLastHeal: `${Math.round((Date.now() - healingMetrics.lastHealTime) / 1000)}s`
+  });
+}
+
+/**
+ * Get healing metrics (for API endpoint)
+ */
+export function getHealingMetrics() {
+  return {
+    ...healingMetrics,
+    chunksHealed: healingMetrics.chunksHealed.size,
+    successRate: healingMetrics.totalJobs > 0
+      ? ((healingMetrics.successfulHeals / healingMetrics.totalJobs) * 100).toFixed(2)
+      : '0'
+  };
+}
 
 /**
  * Graceful shutdown
  */
 export async function stopHealingWorker(): Promise<void> {
-
-  console.log('🛑 Stopping Healing Worker...');
-
-  // Use the shutdown we defined earlier
+  logger.info('Stopping Healing Worker...');
+  
+  // Log final metrics
+  logHealingMetrics();
+  
   await healingQueue.close();
-  console.log('✅ Healing Worker stopped');
+  logger.info('Healing Worker stopped successfully');
 }
 
-// If running this file directly from server.ts (not imported)
+// If running directly (not imported)
 if (require.main === module) {
   startHealingWorker();
   

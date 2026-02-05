@@ -2,7 +2,6 @@ import { io, Socket } from 'socket.io-client';
 import type {
   DeviceRegistrationPayload,
   DeviceRegistrationResponse,
-  ChunkMetadata,
   StoredChunk,
 } from '@/types';
 

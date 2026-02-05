@@ -152,7 +152,7 @@ export interface DeviceQueryFilters {
  */
 export enum DeviceEvent {
   // Client -> Server
-  REGISTER = 'device:register',
+  CONNECT = 'device:connect',
   PING = 'device:ping',
   DISCONNECT = 'disconnect',
   STORAGE_UPDATE = 'device:storage:update',
@@ -161,7 +161,7 @@ export enum DeviceEvent {
   
   
   // Server -> Client
-  REGISTERED = 'device:registered',
+  CONNECTED = 'device:connected',
   PONG = 'device:pong',
   STATUS_UPDATE = 'device:status:update',
   CHUNK_ASSIGNED = 'device:chunk:assigned',
