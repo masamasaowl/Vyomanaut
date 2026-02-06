@@ -1,11 +1,7 @@
-import { Socket, Server as SocketIOServer } from 'socket.io';
-import { prisma } from '../config/database';
+import { Socket } from 'socket.io';
 import { cacheDeviceStatus, updateDeviceLastSeen } from '../config/redis';
 import { DeviceStatus } from '@prisma/client';
-import { healthMonitoringService } from '../modules/replication/health.service';
-import { authService } from '../modules/auth/auth.service';
 import { deviceService } from '../modules/devices/device.service';
-import { number } from 'zod';
 
 
 // ===================================================
@@ -25,63 +21,6 @@ interface SocketDeviceMap {
   lastSeenAt: Date;
   availableStorageBytes: number;
 }
-
-
-/**
- * Before any device event is processed the socket must carry a valid JWT  
- * 
- * The flow:
- *
- * 1. Extracts the JWT from
- *    socket.handshake.auth.token
- * 2. Verifies it via authService.verifyToken()
- * 3. Attaches the decoded token to socket.data
- * 4. On failure → calls next(Error)
- *
- * This runs once per connection attempt
- * before any event handlers.
- *
- * If the token is missing or invalid the socket is
- * disconnected
- * 
- * @param io  The Socket.IO server instance (from server.ts)
- */
-export function setupSocketAuth(io: SocketIOServer
-): void {
-
-  // The middleware of Websocket server
-  io.use(async (socket: Socket, next) => {
-    try {
-
-      // Extract token sent during websocket handshake
-      const token = socket.handshake?.auth?.token as string | undefined;
-
-      if (!token) {
-        console.warn(`🚫 Socket ${socket.id} — no auth token in handshake`);
-        next(new Error('auth-token-missing'));
-        return;
-      }
-
-      // Verify JWT via the existing auth service
-      const decoded = await authService.verifyToken(token);
-
-      // Attach to socket.data so every handler can read it
-      socket.data.userId = decoded.id;
-      socket.data.email   = decoded.email;
-      socket.data.role    = decoded.role;
-
-      console.log(`✅ Socket ${socket.id} authenticated — user ${decoded.email}`);
-
-      // Allow connection and move to next middleware
-      next();                          
-    } catch (err) {
-      console.warn(`🚫 Socket auth failed:`, err);
-      // reject the connection
-      next(new Error('auth-invalid'));  
-    }
-  });
-}
-
 
 /**
  * WebSocket Device Manager

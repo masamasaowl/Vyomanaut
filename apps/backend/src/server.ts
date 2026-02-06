@@ -49,7 +49,6 @@ class VyomonautServer {
     this.io = new SocketIOServer(this.httpServer, {
       // setup cors for wsServer
       cors: {
-
         // Dev -> all
         // Prod -> look env
         origin: config.isDevelopment ? '*' : process.env.ALLOWED_ORIGINS?.split(','),
@@ -167,14 +166,17 @@ class VyomonautServer {
   // WEBSOCKET HANDLERS
   // =================================================
   private setupWebSocket(): void {
+    
 
     // Websocket imports 
     const { setupDeviceEvents } = require('./websocket/device.events');
     const { websocketDeviceManager } = require('./websocket/device.manager');
 
     // Every incoming socket must be authenticated here by the JWT middleware
-    const { setupSocketAuth } = require('./websocket/device.manager');
+    const { setupSocketAuth } = require('./websocket/auth.middleware');
+
     setupSocketAuth(this.io);
+    
     
     // Hand over the socket walkie-talkie to components to socket events
     

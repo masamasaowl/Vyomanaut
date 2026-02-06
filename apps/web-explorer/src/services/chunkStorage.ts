@@ -3,7 +3,22 @@ import { StoredChunk } from '@/types';
 
 
 // We Initialize our Prisma Client
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({
+  log: process.env.NODE_ENV === 'development' 
+    ? ['error', 'warn'] 
+    : ['error'],
+  datasources: {
+    db: {
+      url: process.env.DATABASE_URL
+    }
+  }
+});
+
+
+// Trial feature to implement
+// 1. Simple LRU Cache for hot chunks
+// 2. Or Integrate Redis
+
 
 
 /**
@@ -39,7 +54,6 @@ class ChunkStorageService {
     
     try {
       // Generate local path (simulates /storage/chunks/xxx.enc on Android)
-      // These steps would later aid us integrate our app seamlessly with our device
       const localPath = `/chunks/${chunk.chunkId}.enc`;
       
       // Store in database
@@ -69,7 +83,7 @@ class ChunkStorageService {
     }
   }
   
-  
+
   /**
    * Retrieve a chunk from PostgreSQL
    * 
@@ -91,9 +105,12 @@ class ChunkStorageService {
           deviceId,
           isHealthy: true,
         },
+        select: {
+          encryptedData: true,
+          id: true
+        }
       });
       
-
       // Error if not found
       if (!chunk) {
         throw new Error(`Chunk ${chunkId} not found on device ${deviceId}`);
@@ -257,6 +274,13 @@ class ChunkStorageService {
       console.error(`❌ Failed to clear chunks:`, error);
       return 0;
     }
+  }
+
+  /**
+   * Cleanup (disconnect Prisma)
+   */
+  async disconnect() {
+    await prisma.$disconnect();
   }
 }
 
