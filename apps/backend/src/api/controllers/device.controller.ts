@@ -358,6 +358,32 @@ class DeviceController {
       });
     }
   }
+   
+  /**
+   * @desc    Update storage of device
+   * @route   PATCH /api/v1/devices/${deviceId}
+   * 
+   * We pass
+   * Body: { deviceId, availableStorageBytes }
+   */
+  async updateStorage(req: Request, res: Response): Promise<void> {
+    try {
+
+      // extract id and reason
+      const { deviceId } = req.params;
+      const { availableStorageBytes } = req.body;
+
+      await deviceService.flushHeartbeatToDB(deviceId, availableStorageBytes);
+
+      res.json({
+        success: true,
+        message: 'Storage updated successfully',
+      });
+      
+    } catch (error) {
+      console.error('❌ Error Updating device storage', error);
+    }
+  }
 
   
   /**

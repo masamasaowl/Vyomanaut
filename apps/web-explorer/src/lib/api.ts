@@ -21,6 +21,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
 // Flag to check if access token is already refreshing 
 let isTokenRefreshing = false;
 
+
 // Here we store all the requests made to refresh the token
 // He makes a queue of all the requests
 let failedQueue: any[] = [];
@@ -228,7 +229,7 @@ export const authAPI = {
     website?: string;
     industry?: string;
   }) => {
-    const response = await api.post('/api/v1/auth/register/company', data);
+    const response = await api.post('/api/v1/auth/register/user', data);
     return response.data;
   },
   
@@ -251,151 +252,6 @@ export const authAPI = {
   },
 };
 
-
-// ===================================
-// FILE APIs
-// ===================================
-
-/**
- * All the file related operations can now be performed simply using following methods
- * - upload
- * - download
- * - list
- * - get
- * - getChunks
- * - delete
- * - stats
- */
-export const fileAPI = {
-  
-  /**
-   * Upload FIle 
-   * @param file - File is a browser type for all files 
-   * @param onProgress - param to report upload progress
-   * @returns - Response containing all info about the file
-   */
-  upload: async (file: File, onProgress?: (progress: number) => void) => {
-
-    // Files cannot be sent as JSON so we convert them to a Form Data to add our own field through which we send our file
-    const formData = new FormData();
-
-    // We send the uploaded file inside the file field
-    // Multer would read it inside req.file
-    formData.append('file', file);
-    
-    // Send it to our server
-    const response = await api.post('/api/v1/files/upload', formData, {
-
-      // Define that it is a file using the MIME type
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-
-      // Axios gives us live upload Progress
-      // This would help us create our loading bar
-      // Loaded -> How many bytes have been sent till now
-      // Total -> the complete file size
-      onUploadProgress: (progressEvent) => {
-
-        // If progress count is allowed
-        if (progressEvent.total && onProgress) {
-
-          // Convert progress bytes to percentage
-          const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-
-          // Calls the UI function to update the progress
-          onProgress(progress);
-        }
-      },
-    });
-    
-    // Return the response we got from backend
-    return response.data;
-  },
-  
-  
-  // Download file
-  // Uses the file name and ID
-  download: async (fileId: string, fileName: string) => {
-
-    // Begin to download the file using file ID
-    const response = await api.get(`/api/v1/files/${fileId}/download`, {
-
-      // Tell the backend that we expect Binary data
-      // Else file corrupts as Axios tries parsing it like JSON
-      responseType: 'blob',
-    });
-    
-
-    // We fool the browser making it think that the user has clicked a download link on the page
-
-
-    // The response we get is a Buffer (binary)
-    // We Create a temporary URL inside the memory out of this binary response
-    // Browser treats it as a link
-    // eg: blob:http://localhost/abc-123
-    const url = window.URL.createObjectURL(new Blob([response.data]));
-
-    
-    // We create an invisible anchor tag
-    const link = document.createElement('a');
-    // We set the this anchor tag value to our created file URL
-    link.href = url;
-
-    // Here we begin the download of the anchor tag and give it the name of the file
-    link.setAttribute('download', fileName);
-
-    // We attach this anchor tag to our DOM
-    document.body.appendChild(link);
-
-    // Immediately click it 
-    link.click();
-    // Then remove it 
-    link.remove();
-    // Browser thinks the user clicked on the link
-    
-
-    // We return the response to frontend to showcase downloaded file info
-    return response.data;
-  },
-  
-
-  // List all files
-  // Use filters to list specific files
-  list: async (filters?: { status?: string }) => {
-    const response = await api.get('/api/v1/files', { params: filters });
-    return response.data;
-  },
-
-
-  // Get file details using it's ID
-  get: async (fileId: string) => {
-    const response = await api.get(`/api/v1/files/${fileId}`);
-    return response.data;
-  },
-
-
-  // Fetch the chunks of the file from it's fileID
-  getChunks: async (fileId: string) => {
-    const response = await api.get(`/api/v1/files/${fileId}/chunks`);
-    return response.data;
-  },
-
-
-  // Delete file
-  delete: async (fileId: string) => {
-    const response = await api.delete(`/api/v1/files/${fileId}`);
-    return response.data;
-  },
-  
-  
-  // Get file stats
-  stats: async () => {
-    const response = await api.get('/api/v1/files/stats');
-    return response.data;
-  },
-};
-
 // ===================================
 // DEVICE APIs (NEW)
 // ===================================
@@ -412,7 +268,15 @@ export const fileAPI = {
 export const deviceAPI = {
 
   // They work in sync with our backend
-  // 
+  register: async (data: {
+    deviceId: string;
+    deviceType: 'DESKTOP' | 'ANDROID' | 'IOS';
+    totalStorageBytes: number;
+  }) => {
+    const response = await api.post('/api/v1/devices/register', data);
+    return response.data;
+  },
+  
   list: async (filters?: {
     status?: string;
     minReliability?: number;
@@ -432,45 +296,16 @@ export const deviceAPI = {
     return response.data;
   },
   
-  getHealthyDevices: async (params?: {
-    minStorage?: number;
-    minReliability?: number;
-    limit?: number;
-  }) => {
-    const response = await api.get('/api/v1/devices/healthy', { params });
-    return response.data;
-  },
-  
-  stats: async () => {
-    const response = await api.get('/api/v1/devices/stats');
-    return response.data;
-  },
-  
   suspend: async (deviceId: string, reason?: string) => {
     const response = await api.post(`/api/v1/devices/${deviceId}/suspend`, { reason });
     return response.data;
   },
-};
 
-
-// ===================================
-// PAYMENT APIs (NEW)
-// ===================================
-
-/**
- * It's responsibilities 
- * ( These are not functional for now )
- * - getDeviceEarnings
- * - getSystemStats
- */
-export const paymentAPI = {
-  getDeviceEarnings: async (deviceId: string) => {
-    const response = await api.get(`/api/v1/payments/device/${deviceId}`);
-    return response.data;
-  },
   
-  getSystemStats: async () => {
-    const response = await api.get('/api/v1/payments/stats');
+  updateStorage: async (deviceId: string, availableStorageBytes: number) => {
+    const response = await api.patch(`/api/v1/devices/${deviceId}`, {
+      availableStorageBytes
+    });
     return response.data;
   },
 };
@@ -487,5 +322,37 @@ export const healthAPI = {
     return response.data;
   },
 };
+
+
+// ===================================
+// HELPER FUNCTIONS
+// ===================================
+
+/**
+ * Get error message from API error
+ */
+export function getErrorMessage(error: any): string {
+  if (typeof error === 'string') return error;
+  // API error
+  if (error?.response?.data?.error) return error.response.data.error;
+  // TS error
+  if (error?.message) return error.message;
+  return 'An unexpected error occurred';
+}
+
+/**
+ * Check if user is authenticated
+ */
+export function isAuthenticated(): boolean {
+  return !!localStorage.getItem('accessToken');
+}
+
+/**
+ * Get current user from localStorage
+ */
+export function getCurrentUser() {
+  const userStr = localStorage.getItem('user');
+  return userStr ? JSON.parse(userStr) : null;
+}
 
 export default api;

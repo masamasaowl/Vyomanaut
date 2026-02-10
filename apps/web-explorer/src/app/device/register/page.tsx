@@ -5,278 +5,368 @@ import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/store/authStore';
 import { useDeviceStore } from '@/store/deviceStore';
 import { useToast } from '@/contexts/ToastContext';
+import { deviceAPI } from '@/lib/api';
+import { Wifi, WifiOff, LogOut, Loader2, CheckCircle, Info } from 'lucide-react';
+
+/**
+ * OPTIMIZED Device Registration Page
+ * 
+ * IMPROVEMENTS:
+ * 1. Single-step registration (no confusing multi-step)
+ * 2. Clear connection status indicator
+ * 3. Logout option always visible
+ * 4. Auto-connect after registration
+ * 5. Real-time feedback on each step
+ * 6. Error recovery options
+ */
 
 export default function DeviceRegisterPage() {
   const router = useRouter();
-
- // The Auth store
+  
+  // Auth
+  const { user, isAuthenticated, logout } = useAuthStore();
+  
+  // Device
   const {
-    user,
-    isAuthenticated, 
-    isLoading: authLoading 
-  } = useAuthStore();
-
-  // The Device store (our socket events)
-  const {
-    isConnected,
+    device,
     isRegistered,
-    connectSocket,
-    registerDevice,
+    isConnected,
     connectionError,
+    registerDevice,
+    connectSocket,
   } = useDeviceStore();
-
+  
   const toast = useToast();
   
-  // State variables
+  // Local state
   const [deviceName, setDeviceName] = useState('');
-  // We set storage by default 5GB
-  const [storageGB, setStorageGB] = useState(5); 
-  const [connecting, setConnecting] = useState(false);
-  const [registering, setRegistering] = useState(false);
-  // To render conditional styling between login and register, we mark the step
-  const [step, setStep] = useState<'connect' | 'register'>('connect');
+  const [storageGB, setStorageGB] = useState(10);
+  const [step, setStep] = useState<'configure' | 'registering' | 'connecting' | 'complete'>('configure');
+  const [error, setError] = useState('');
   
-
   // Redirect if not authenticated
   useEffect(() => {
-    if (!authLoading && !isAuthenticated) {
+    if (!isAuthenticated) {
       router.push('/login');
     }
-  }, [isAuthenticated, authLoading, router]);
+  }, [isAuthenticated, router]);
   
-
-  // Redirect to dashboard if already registered
+  // Auto-redirect if already registered and connected
   useEffect(() => {
-    if (isRegistered) {
+    if (isRegistered && isConnected) {
       router.push('/device/dashboard');
     }
-  }, [isRegistered, router]);
+  }, [isRegistered, isConnected, router]);
   
-
-  // We assign the device name as the browser name by default 
+  // Set default device name
   useEffect(() => {
-    // Extract the browser 
     if (!deviceName) {
       const browserInfo =
         navigator.userAgent.includes('Chrome') ? 'Chrome' :
         navigator.userAgent.includes('Firefox') ? 'Firefox' :
         navigator.userAgent.includes('Safari') ? 'Safari' : 'Browser';
-
-      // Set browser as the device name 
+      
       setDeviceName(`My ${browserInfo} Device`);
     }
   }, []);
   
-  
-  // Handle WebSocket connection
-  const handleConnect = async () => {
-    setConnecting(true);
-    
+  // Handle logout
+  const handleLogout = async () => {
     try {
-      // Call the store to connect to server
-      await connectSocket();
-      // Success
-      toast.success('Connected to Vyomanaut network!');
-
-      // Now we can register our device
-      setStep('register');
-    } catch (error: any) {
-      toast.error(error.message || 'Connection failed');
-    } finally {
-      // We are connected
-      setConnecting(false);
+      await logout();
+      toast.success('Logged out successfully');
+      router.push('/login');
+    } catch (error) {
+      toast.error('Logout failed');
     }
   };
   
-  // Handle device registration
+  // Handle registration (single button!)
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Make sure user is logged in
     if (!user) {
-      toast.error('User not found. Please login again.');
-      router.push('/login');
+      setError('User not found. Please login again.');
       return;
     }
     
-    // Let's register the device
-    setRegistering(true);
+    setError('');
     
     try {
-      // Convert GB to bytes
-      // We showcase it as 5GB
-      const storageBytes = storageGB * 1024 * 1024 * 1024; 
+      // STEP 1: Register device via REST API
+      setStep('registering');
       
-      // Call the store to get the device registered
+      const deviceId = `web-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const storageBytes = storageGB * 1024 * 1024 * 1024;
+      
+      const response = await deviceAPI.register({
+        deviceId,
+        deviceType: 'DESKTOP',
+        totalStorageBytes: storageBytes,
+      });
+
+    console.log(response);
+      
+      toast.success('Device registered successfully!');
+      
+      // Update local store
       await registerDevice(deviceName, storageBytes, user.id);
       
-      toast.success('Device registered successfully! Starting to earn...');
-      // redirect
-      router.push('/device/dashboard');
-    } catch (error: any) {
-      toast.error(error.message || 'Registration failed');
-    } finally {
-      // The device is registered
-      setRegistering(false);
+      // STEP 2: Connect WebSocket automatically
+      setStep('connecting');
+      
+      const jwt = localStorage.getItem('accessToken');
+      if (!jwt) {
+        throw new Error('No JWT token found');
+      }
+      
+      await connectSocket(jwt);
+      
+      toast.success('Device connected to network!');
+      
+      // STEP 3: Complete - redirect to dashboard
+      setStep('complete');
+      
+      setTimeout(() => {
+        router.push('/device/dashboard');
+      }, 1000);
+      
+    } catch (err: any) {
+      setError(err.message || 'Registration failed');
+      setStep('configure');
+      toast.error(err.message || 'Registration failed');
     }
   };
   
-  
-  if (authLoading) {
+  // Render different states
+  const renderContent = () => {
+    // Configuration step
+    if (step === 'configure') {
+      return (
+        <form onSubmit={handleRegister} className="space-y-6">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Device Name
+            </label>
+            <input
+              type="text"
+              value={deviceName}
+              onChange={(e) => setDeviceName(e.target.value)}
+              required
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-base"
+              placeholder="My Device"
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Storage Allocation: <span className="text-indigo-600 font-semibold">{storageGB} GB</span>
+            </label>
+            <input
+              type="range"
+              min="1"
+              max="50"
+              step="1"
+              value={storageGB}
+              onChange={(e) => setStorageGB(parseInt(e.target.value))}
+              className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+            />
+            <div className="flex justify-between text-xs text-gray-500 mt-1">
+              <span>1 GB</span>
+              <span>50 GB</span>
+            </div>
+          </div>
+          
+          {/* Earnings Estimate */}
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+            <div className="flex justify-between items-center">
+              <div>
+                <p className="text-sm font-medium text-green-900">Potential Earnings</p>
+                <p className="text-xs text-green-700">Estimated per month</p>
+              </div>
+              <div className="text-right">
+                <p className="text-2xl font-bold text-green-600">
+                  ₹{(storageGB * 0.5 * 30).toFixed(0)}
+                </p>
+                <p className="text-xs text-green-700">~₹0.5/GB/day</p>
+              </div>
+            </div>
+          </div>
+          
+          {/* Info Box */}
+          <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+            <div className="flex items-start gap-3">
+              <Info className="w-5 h-5 text-indigo-600 mt-0.5 shrink-0" />
+              <div className="text-sm text-indigo-900">
+                <p className="font-medium mb-1">What happens next?</p>
+                <ul className="space-y-1 text-indigo-800">
+                  <li>✓ Your device will be registered on the network</li>
+                  <li>✓ Encrypted file chunks will be stored in your browser</li>
+                  <li>✓ You will start earning based on storage × uptime</li>
+                  <li>✓ Keep this tab open to stay connected</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+          
+          {error && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+              <p className="text-sm text-red-800">{error}</p>
+            </div>
+          )}
+          
+          <button
+            type="submit"
+            className="w-full py-3 px-6 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition flex items-center justify-center gap-2"
+          >
+            Register & Connect Device
+          </button>
+        </form>
+      );
+    }
+    
+    // Processing steps
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-gray-600">Loading...</div>
+      <div className="space-y-6">
+        {/* Progress Steps */}
+        <div className="space-y-4">
+          {/* Step 1: Registering */}
+          <div className={`flex items-center gap-3 p-4 rounded-lg border-2 ${
+            step === 'registering' ? 'border-indigo-500 bg-indigo-50' :
+            step === 'connecting' || step === 'complete' ? 'border-green-500 bg-green-50' :
+            'border-gray-200'
+          }`}>
+            {step === 'registering' && (
+              <Loader2 className="w-5 h-5 text-indigo-600 animate-spin" />
+            )}
+            {(step === 'connecting' || step === 'complete') && (
+              <CheckCircle className="w-5 h-5 text-green-600" />
+            )}
+            
+            <div className="flex-1">
+              <p className="font-medium text-gray-900">Registering Device</p>
+              <p className="text-sm text-gray-600">Creating device on server...</p>
+            </div>
+          </div>
+          
+          {/* Step 2: Connecting */}
+          <div className={`flex items-center gap-3 p-4 rounded-lg border-2 ${
+            step === 'connecting' ? 'border-indigo-500 bg-indigo-50' :
+            step === 'complete' ? 'border-green-500 bg-green-50' :
+            'border-gray-200'
+          }`}>
+            {step === 'connecting' && (
+              <Loader2 className="w-5 h-5 text-indigo-600 animate-spin" />
+            )}
+            {step === 'complete' && (
+              <CheckCircle className="w-5 h-5 text-green-600" />
+            )}
+            {(step === 'registering') && (
+              <div className="w-5 h-5 rounded-full border-2 border-gray-300" />
+            )}
+            
+            <div className="flex-1">
+              <p className="font-medium text-gray-900">Connecting to Network</p>
+              <p className="text-sm text-gray-600">Establishing WebSocket connection...</p>
+            </div>
+          </div>
+          
+          {/* Step 3: Complete */}
+          <div className={`flex items-center gap-3 p-4 rounded-lg border-2 ${
+            step === 'complete' ? 'border-green-500 bg-green-50' : 'border-gray-200'
+          }`}>
+            {step === 'complete' && (
+              <CheckCircle className="w-5 h-5 text-green-600" />
+            )}
+            {step !== 'complete' && (
+              <div className="w-5 h-5 rounded-full border-2 border-gray-300" />
+            )}
+            
+            <div className="flex-1">
+              <p className="font-medium text-gray-900">Ready to Earn</p>
+              <p className="text-sm text-gray-600">Device is online and operational</p>
+            </div>
+          </div>
+        </div>
+        
+        {connectionError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+            <p className="text-sm text-red-800">{connectionError}</p>
+            <button
+              onClick={() => setStep('configure')}
+              className="mt-2 text-sm text-red-600 hover:text-red-700 font-medium"
+            >
+              ← Try Again
+            </button>
+          </div>
+        )}
       </div>
     );
+  };
+  
+  if (!isAuthenticated) {
+    return null;
   }
   
   return (
-    <div className="min-h-screen bg-linear-to-b from-indigo-50 to-white py-12 px-4">
-      <div className="max-w-2xl mx-auto">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">
-            Register Your Device
-          </h1>
-          <p className="text-gray-600">
-            Connect to the Vyomanaut network and start earning
-          </p>
-        </div>
-        
-        {/* Step Indicator */}
-        <div className="flex items-center justify-center mb-8">
-          <div className={`flex items-center ${step === 'connect' ? 'text-indigo-600' : 'text-green-600'}`}>
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 ${step === 'connect' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-green-600 bg-green-600 text-white'}`}>
-              {step === 'connect' ? '1' : '✓'}
-            </div>
-            <span className="ml-2 font-medium">Connect</span>
-          </div>
-          
-          <div className="w-16 h-0.5 mx-4 bg-gray-300"></div>
-          
-          <div className={`flex items-center ${step === 'register' ? 'text-indigo-600' : 'text-gray-400'}`}>
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 ${step === 'register' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-gray-300'}`}>
-              2
-            </div>
-            <span className="ml-2 font-medium">Register</span>
-          </div>
-        </div>
-        
-        {/* Main Content */}
-        <div className="bg-white rounded-lg shadow-lg p-8">
-          {step === 'connect' ? (
-            /* Step 1: Connect to WebSocket */
-            <div className="text-center">
-              <div className="w-24 h-24 mx-auto mb-6 bg-indigo-100 rounded-full flex items-center justify-center">
-                <svg className="w-12 h-12 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
-                </svg>
-              </div>
+    <div className="min-h-screen bg-linear-to-b from-indigo-50 to-white">
+      {/* Header */}
+      <header className="bg-white shadow-sm border-b border-gray-200">
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-16">
+            <div className="flex items-center gap-3">
+              <h1 className="text-xl font-bold text-gray-900">Vyomanaut Explorer</h1>
               
-              <h2 className="text-2xl font-bold text-gray-900 mb-4">
-                Connect to Network
-              </h2>
-              
-              <p className="text-gray-600 mb-8">
-                We will establish a secure connection to the Vyomanaut backend. Your device will be able to receive and serve file chunks.
-              </p>
-              
-              {connectionError && (
-                <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-md">
-                  <p className="text-sm text-red-800">{connectionError}</p>
+              {/* Connection Status */}
+              {isRegistered && (
+                <div className="flex items-center gap-2">
+                  {isConnected ? (
+                    <>
+                      <Wifi className="w-4 h-4 text-green-500" />
+                      <span className="text-sm text-green-600 font-medium">Connected</span>
+                    </>
+                  ) : (
+                    <>
+                      <WifiOff className="w-4 h-4 text-red-500" />
+                      <span className="text-sm text-red-600 font-medium">Disconnected</span>
+                    </>
+                  )}
                 </div>
               )}
-              
-              {isConnected ? (
-                <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-md">
-                  <p className="text-sm text-green-800">✓ Connected successfully!</p>
-                </div>
-              ) : null}
-              
+            </div>
+            
+            <div className="flex items-center gap-4">
+              <span className="text-sm text-gray-600">{user?.email}</span>
               <button
-                onClick={handleConnect}
-                disabled={connecting || isConnected}
-                className="w-full py-3 px-6 bg-indigo-600 text-white font-medium rounded-md hover:bg-indigo-700 disabled:bg-gray-400 transition"
+                onClick={handleLogout}
+                className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-md transition"
               >
-                {connecting ? 'Connecting...' : isConnected ? 'Connected ✓' : 'Connect to Network'}
+                <LogOut className="w-4 h-4" />
+                Logout
               </button>
             </div>
-          ) : (
-            /* Step 2: Register Device */
-            <form onSubmit={handleRegister}>
-              <div className="space-y-6">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Device Name
-                  </label>
-                  <input
-                    type="text"
-                    value={deviceName}
-                    onChange={(e) => setDeviceName(e.target.value)}
-                    required
-                    className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    placeholder="My Device"
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Storage Allocation: <span className="text-indigo-600 font-semibold">{storageGB} GB</span>
-                  </label>
-                  <input
-                    type="range"
-                    min="1"
-                    max="50"
-                    step="1"
-                    value={storageGB}
-                    onChange={(e) => setStorageGB(parseInt(e.target.value))}
-                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
-                  />
-                  <div className="flex justify-between text-xs text-gray-500 mt-1">
-                    <span>1 GB</span>
-                    <span>50 GB</span>
-                  </div>
-                </div>
-                
-                {/* Info Box */}
-                <div className="bg-indigo-50 border border-indigo-200 rounded-md p-4">
-                  <h3 className="font-medium text-indigo-900 mb-2">What happens next?</h3>
-                  <ul className="text-sm text-indigo-800 space-y-1">
-                    <li>✓ Your device will be registered on the network</li>
-                    <li>✓ Companies file chunks will be stored in your browser</li>
-                    <li>✓ You will start earning money based on storage × uptime</li>
-                    <li>✓ Your device stays online as long as this tab is open</li>
-                  </ul>
-                </div>
-                
-                {/* Earnings Estimate */}
-                <div className="bg-green-50 border border-green-200 rounded-md p-4">
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <p className="text-sm font-medium text-green-900">Potential Earnings</p>
-                      <p className="text-xs text-green-700">Estimated per month</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-2xl font-bold text-green-600">
-                        ₹{(storageGB * 0.5 * 30).toFixed(0)}
-                      </p>
-                      <p className="text-xs text-green-700">~₹0.5/GB/day</p>
-                    </div>
-                  </div>
-                </div>
-                
-                <button
-                  type="submit"
-                  disabled={registering}
-                  className="w-full py-3 px-6 bg-indigo-600 text-white font-medium rounded-md hover:bg-indigo-700 disabled:bg-gray-400 transition"
-                >
-                  {registering ? 'Registering...' : 'Register Device'}
-                </button>
-              </div>
-            </form>
-          )}
+          </div>
         </div>
-      </div>
+      </header>
+      
+      {/* Main Content */}
+      <main className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div className="bg-white rounded-lg shadow-lg p-8">
+          <div className="text-center mb-8">
+            <h2 className="text-3xl font-bold text-gray-900 mb-2">
+              {step === 'configure' ? 'Register Your Device' : 'Setting Up Device'}
+            </h2>
+            <p className="text-gray-600">
+              {step === 'configure' 
+                ? 'Configure your device to start earning'
+                : 'Please wait while we set up your device...'
+              }
+            </p>
+          </div>
+          
+          {renderContent()}
+        </div>
+      </main>
     </div>
   );
 }

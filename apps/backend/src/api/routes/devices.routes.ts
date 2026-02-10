@@ -58,6 +58,18 @@ router.get('/:deviceId', (req, res) => deviceController.getDevice(req, res));
 router.get('/:deviceId/health', (req, res) => deviceController.getDeviceHealth(req, res));
 
 /**
+ * Update storage of device
+ * PATCH /api/v1/devices/${deviceId}
+ */
+router.patch('/:deviceId',
+  authenticate,
+  authorize(UserRole.ADMIN),
+  (req,res) => 
+  deviceController.updateStorage(req,res),
+)
+
+
+/**
  * POST /api/v1/devices/:deviceId/suspend
  * Suspend a device permanently
  */

@@ -274,7 +274,7 @@ export const fileAPI = {
    * @param onProgress - param to report upload progress
    * @returns - Response containing all info about the file
    */
-  upload: async (file: File, onProgress?: (progress: number) => void) => {
+  upload: async ( file: File, onProgress?: (progress: number) => void) => {
 
     // Files cannot be sent as JSON so we convert them to a Form Data to add our own field through which we send our file
     const formData = new FormData();
@@ -282,7 +282,7 @@ export const fileAPI = {
     // We send the uploaded file inside the file field
     // Multer would read it inside req.file
     formData.append('file', file);
-    
+
     // Send it to our server
     const response = await api.post('/api/v1/files/upload', formData, {
 
