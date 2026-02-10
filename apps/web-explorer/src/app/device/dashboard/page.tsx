@@ -6,28 +6,33 @@ import { useAuthStore } from '@/store/authStore';
 import { useDeviceStore } from '@/store/deviceStore';
 import { useToast } from '@/contexts/ToastContext';
 import {
-  HardDrive, Wifi, WifiOff, TrendingUp, Package,
-  LogOut, Circle, Activity, RefreshCw, AlertCircle
+  Wifi,
+  WifiOff,
+  LogOut,
+  RefreshCw,
+  Activity,
+  HardDrive,
+  DollarSign,
+  AlertCircle,
+  CheckCircle,
+  XCircle,
 } from 'lucide-react';
-import { formatFileSize, formatCurrency, formatRelativeTime } from '@/lib/utils';
 
 /**
- * OPTIMIZED Device Dashboard
+ * FIXED Device Dashboard Page
  * 
- * IMPROVEMENTS:
- * 1. Real-time connection status (always visible)
- * 2. Live chunk assignment feed
- * 3. Connection health indicator
- * 4. Auto-refresh every 5 seconds
- * 5. Clear error messages
- * 6. Reconnect button
+ * CRITICAL FIXES:
+ * 1. ✅ Respect circuit breaker (max 3 retries)
+ * 2. ✅ Stop auto-refresh if device not found
+ * 3. ✅ Show clear error states
+ * 4. ✅ Allow manual retry after fixing issues
  */
 
 export default function DeviceDashboardPage() {
   const router = useRouter();
   
   // Auth
-  const { user, logout } = useAuthStore();
+  const { user, isAuthenticated, logout } = useAuthStore();
   
   // Device
   const {
@@ -35,149 +40,192 @@ export default function DeviceDashboardPage() {
     isRegistered,
     isConnected,
     connectionError,
+    latency,
     chunks,
+    chunksLoading,
+    chunksError,
     metrics,
+    retryCount,
+    maxRetries,
     loadChunks,
-    disconnectSocket,
+    connectSocket,
+    resetRetryCount,
   } = useDeviceStore();
   
   const toast = useToast();
   
   // Local state
-  const [currentTime, setCurrentTime] = useState(new Date());
-  const [sessionStart] = useState(new Date());
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [uptime, setUptime] = useState(0);
+  
+  // CRITICAL FIX: Track if circuit breaker is open
+  const circuitBreakerOpen = retryCount >= maxRetries;
+  
+  // Redirect if not authenticated
+  useEffect(() => {
+    if (!isAuthenticated) {
+      router.push('/login');
+    }
+  }, [isAuthenticated, router]);
   
   // Redirect if not registered
   useEffect(() => {
-    if (!isRegistered) {
+    if (isAuthenticated && !isRegistered) {
       router.push('/device/register');
     }
-  }, [isRegistered, router]);
+  }, [isAuthenticated, isRegistered, router]);
   
-  // Update time every second
+  // FIXED: Auto-refresh with circuit breaker
   useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-  
-  // Auto-refresh chunks every 5 seconds
-  useEffect(() => {
-    if (autoRefresh && device) {
-      const interval = setInterval(() => {
-        loadChunks();
-      }, 5000);
-      
-      return () => clearInterval(interval);
+    if (!device || !autoRefresh || circuitBreakerOpen) {
+      return;
     }
-  }, [autoRefresh, device, loadChunks]);
+    
+    console.log('🔄 Setting up auto-refresh (every 5s)');
+    
+    const interval = setInterval(() => {
+      console.log('🔄 Auto-refresh triggered');
+      loadChunks();
+    }, 5000);
+    
+    return () => {
+      console.log('🔄 Clearing auto-refresh');
+      clearInterval(interval);
+    };
+  }, [device, autoRefresh, loadChunks, circuitBreakerOpen]);
+  
+  // Uptime counter
+  useEffect(() => {
+    if (!isConnected) return;
+    
+    const interval = setInterval(() => {
+      setUptime(prev => prev + 1);
+    }, 1000);
+    
+    return () => clearInterval(interval);
+  }, [isConnected]);
   
   // Load chunks on mount
   useEffect(() => {
-    if (device) {
+    if (device && isConnected && !circuitBreakerOpen) {
       loadChunks();
     }
-  }, [device]);
+  }, [device, isConnected,loadChunks,circuitBreakerOpen]);
   
   // Handle logout
   const handleLogout = async () => {
     try {
-      disconnectSocket();
       await logout();
       toast.success('Logged out successfully');
       router.push('/login');
     } catch (error) {
       toast.error('Logout failed');
+      console.log(error);
     }
   };
   
   // Handle reconnect
   const handleReconnect = async () => {
+    if (!device) return;
+    
     try {
       const jwt = localStorage.getItem('accessToken');
       if (!jwt) {
-        throw new Error('No JWT token');
+        toast.error('No authentication token. Please login again.');
+        router.push('/login');
+        return;
       }
       
-      // This would need to be added to deviceStore
-      // await connectSocket(jwt);
-      toast.success('Reconnecting...');
-      window.location.reload();
-    } catch (error) {
-      toast.error('Reconnect failed');
+      toast.info('Reconnecting...');
+      await connectSocket(jwt, device.deviceId);
+      toast.success('Reconnected successfully!');
+    } catch (error: any) {
+      toast.error(error.message || 'Reconnection failed');
     }
   };
   
-  // Calculate metrics
-  const storageUsedBytes = device ? device.totalStorageBytes - device.availableStorageBytes : 0;
-  const storageUsedPercent = device ? (storageUsedBytes / device.totalStorageBytes) * 100 : 0;
+  // Handle manual refresh
+  const handleManualRefresh = () => {
+    if (circuitBreakerOpen) {
+      toast.error('Too many failed attempts. Please fix the issue and retry.');
+      return;
+    }
+    
+    toast.info('Refreshing chunks...');
+    loadChunks();
+  };
   
-  const sessionUptimeSeconds = Math.floor((currentTime.getTime() - sessionStart.getTime()) / 1000);
-  const uptimeHours = Math.floor(sessionUptimeSeconds / 3600);
-  const uptimeMinutes = Math.floor((sessionUptimeSeconds % 3600) / 60);
-  const uptimeSeconds = sessionUptimeSeconds % 60;
+  // CRITICAL FIX: Handle circuit breaker reset
+  const handleRetryAfterError = () => {
+    console.log('🔄 User requested retry after circuit breaker');
+    resetRetryCount();
+    
+    toast.info('Retrying...');
+    loadChunks();
+  };
   
-  const earningsPerHour = device ? (device.totalStorageBytes / (1024 ** 3)) * (0.5 / 24) : 0;
-  const sessionEarnings = earningsPerHour * (sessionUptimeSeconds / 3600);
+  // Format uptime
+  const formatUptime = (seconds: number) => {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
   
-  if (!device) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-gray-600">Loading device...</div>
-      </div>
-    );
+  if (!isAuthenticated || !isRegistered || !device) {
+    return null;
   }
   
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header with Connection Status */}
-      <header className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-10">
+    <div className="min-h-screen bg-linear-to-b from-indigo-50 to-white">
+      {/* Header */}
+      <header className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-4">
               <h1 className="text-xl font-bold text-gray-900">Vyomanaut Explorer</h1>
               
-              {/* Connection Status - Prominent */}
-              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full ${
-                isConnected 
-                  ? 'bg-green-100 border-2 border-green-300' 
-                  : 'bg-red-100 border-2 border-red-300'
+              {/* Connection Status Badge */}
+              <div className={`flex items-center gap-2 px-3 py-1 rounded-full border-2 ${
+                isConnected
+                  ? 'border-green-500 bg-green-50'
+                  : 'border-red-500 bg-red-50'
               }`}>
                 {isConnected ? (
                   <>
                     <Wifi className="w-4 h-4 text-green-600 animate-pulse" />
-                    <span className="text-sm text-green-700 font-semibold">ONLINE</span>
+                    <span className="text-sm font-semibold text-green-700">
+                      ONLINE
+                    </span>
+                    {latency > 0 && (
+                      <span className="text-xs text-green-600 ml-1">
+                        {latency}ms
+                      </span>
+                    )}
                   </>
                 ) : (
                   <>
                     <WifiOff className="w-4 h-4 text-red-600" />
-                    <span className="text-sm text-red-700 font-semibold">OFFLINE</span>
+                    <span className="text-sm font-semibold text-red-700">
+                      OFFLINE
+                    </span>
                   </>
                 )}
               </div>
-              
-              {/* Latency indicator */}
-              {isConnected && (
-                <div className="text-xs text-gray-500">
-                  Latency: {metrics.avgLatency.toFixed(0)}ms
-                </div>
-              )}
             </div>
             
             <div className="flex items-center gap-4">
-              <div className="text-sm text-gray-600">
-                {user?.email}
-              </div>
-              
               {!isConnected && (
                 <button
                   onClick={handleReconnect}
-                  className="flex items-center gap-2 px-3 py-2 text-sm text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition"
+                  className="px-3 py-2 text-sm bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition"
                 >
-                  <RefreshCw className="w-4 h-4" />
                   Reconnect
                 </button>
               )}
+              
+              <span className="text-sm text-gray-600">{user?.email}</span>
               
               <button
                 onClick={handleLogout}
@@ -191,303 +239,294 @@ export default function DeviceDashboardPage() {
         </div>
       </header>
       
-      {/* Connection Error Banner */}
-      {connectionError && (
-        <div className="bg-red-50 border-b border-red-200">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
-            <div className="flex items-center gap-3">
-              <AlertCircle className="w-5 h-5 text-red-600" />
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* CRITICAL FIX: Show circuit breaker error */}
+        {circuitBreakerOpen && (
+          <div className="mb-6 bg-red-50 border-2 border-red-200 rounded-lg p-6">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-6 h-6 text-red-600 mt-0.5 shrink-0" />
               <div className="flex-1">
-                <p className="text-sm text-red-800 font-medium">Connection Error</p>
-                <p className="text-xs text-red-700">{connectionError}</p>
+                <h3 className="text-lg font-semibold text-red-900 mb-2">
+                  Too Many Failed Attempts
+                </h3>
+                <p className="text-sm text-red-800 mb-3">
+                  Failed to load chunks after {maxRetries} attempts. This usually means:
+                </p>
+                <ul className="text-sm text-red-700 space-y-1 mb-4">
+                  <li>• Device was not properly registered via REST API</li>
+                  <li>• Device ID mismatch between registration and connection</li>
+                  <li>• Backend server is not running or not accessible</li>
+                  <li>• Database connection issues</li>
+                </ul>
+                <div className="flex gap-3">
+                  <button
+                    onClick={handleRetryAfterError}
+                    className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-md hover:bg-red-700 transition"
+                  >
+                    Retry Now
+                  </button>
+                  <button
+                    onClick={() => router.push('/device/register')}
+                    className="px-4 py-2 bg-white text-red-600 text-sm font-medium border-2 border-red-600 rounded-md hover:bg-red-50 transition"
+                  >
+                    Re-register Device
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {/* Connection Error */}
+        {connectionError && !circuitBreakerOpen && (
+          <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-red-600 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-sm font-medium text-red-800">Connection Error</p>
+                <p className="text-sm text-red-700 mt-1">{connectionError}</p>
               </div>
               <button
                 onClick={handleReconnect}
-                className="px-3 py-1 text-sm text-red-700 hover:text-red-800 font-medium"
+                className="text-sm text-red-600 hover:text-red-700 font-medium"
               >
                 Retry
               </button>
             </div>
           </div>
-        </div>
-      )}
-      
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Device Info Card */}
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <div className="flex items-center justify-between mb-4">
+        )}
+        
+        {/* Device Info */}
+        <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+          <div className="flex justify-between items-start mb-4">
             <div>
-              <h2 className="text-2xl font-bold text-gray-900">{device.deviceId}</h2>
-              <p className="text-sm text-gray-500">Device ID</p>
+              <h2 className="text-2xl font-bold text-gray-900">{device.name}</h2>
+              <p className="text-sm text-gray-600 mt-1">ID: {device.deviceId}</p>
             </div>
-            <div className={`px-4 py-2 rounded-full border-2 ${
-              isConnected 
-                ? 'bg-green-50 border-green-200 text-green-700' 
-                : 'bg-red-50 border-red-200 text-red-700'
+            
+            <div className={`px-3 py-1 rounded-full text-sm font-medium ${
+              isConnected
+                ? 'bg-green-100 text-green-800'
+                : 'bg-red-100 text-red-800'
             }`}>
-              <div className="flex items-center gap-2">
-                <Circle className={`w-3 h-3 ${isConnected ? 'fill-green-500' : 'fill-red-500'}`} />
-                <span className="font-medium">{isConnected ? 'ONLINE' : 'OFFLINE'}</span>
-              </div>
+              {isConnected ? '● ONLINE' : '● OFFLINE'}
             </div>
           </div>
           
           {/* Stats Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6">
-            <div className="bg-gray-50 rounded-lg p-4">
-              <div className="text-sm font-medium text-gray-600 mb-1">Total Storage</div>
-              <div className="text-2xl font-bold text-gray-900">
-                {formatFileSize(device.totalStorageBytes)}
-              </div>
+          <div className="grid grid-cols-4 gap-4">
+            <div className="text-center p-4 bg-gray-50 rounded-lg">
+              <p className="text-2xl font-bold text-gray-900">
+                {(device.totalStorageBytes / (1024 ** 3)).toFixed(0)} GB
+              </p>
+              <p className="text-sm text-gray-600">Total Storage</p>
             </div>
             
-            <div className="bg-gray-50 rounded-lg p-4">
-              <div className="text-sm font-medium text-gray-600 mb-1">Used Storage</div>
-              <div className="text-2xl font-bold text-indigo-600">
-                {formatFileSize(storageUsedBytes)}
-              </div>
+            <div className="text-center p-4 bg-gray-50 rounded-lg">
+              <p className="text-2xl font-bold text-gray-900">
+                {(metrics.bytesStored / (1024 ** 3)).toFixed(2)} GB
+              </p>
+              <p className="text-sm text-gray-600">Used</p>
             </div>
             
-            <div className="bg-gray-50 rounded-lg p-4">
-              <div className="text-sm font-medium text-gray-600 mb-1">Chunks Stored</div>
-              <div className="text-2xl font-bold text-gray-900">
-                {chunks.length}
-              </div>
+            <div className="text-center p-4 bg-gray-50 rounded-lg">
+              <p className="text-2xl font-bold text-gray-900">{chunks.length}</p>
+              <p className="text-sm text-gray-600">Chunks</p>
             </div>
             
-            <div className="bg-gray-50 rounded-lg p-4">
-              <div className="text-sm font-medium text-gray-600 mb-1">Reliability</div>
-              <div className="text-2xl font-bold text-green-600">
+            <div className="text-center p-4 bg-gray-50 rounded-lg">
+              <p className="text-2xl font-bold text-gray-900">
                 {device.reliabilityScore.toFixed(1)}%
-              </div>
+              </p>
+              <p className="text-sm text-gray-600">Reliability</p>
             </div>
           </div>
         </div>
         
-        {/* Storage & Earnings Row */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-          {/* Storage Visualization */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">Storage Usage</h3>
-              <HardDrive className="w-5 h-5 text-gray-400" />
+        {/* Activity & Earnings */}
+        <div className="grid grid-cols-2 gap-6 mb-6">
+          {/* Activity */}
+          <div className="bg-white rounded-lg shadow-sm p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <Activity className="w-5 h-5 text-indigo-600" />
+              <h3 className="text-lg font-semibold text-gray-900">Activity</h3>
             </div>
             
-            <div className="mb-6">
-              <div className="flex items-center justify-between text-sm mb-2">
-                <span className="text-gray-600">
-                  {formatFileSize(storageUsedBytes)} / {formatFileSize(device.totalStorageBytes)}
-                </span>
-                <span className="font-medium text-indigo-600">
-                  {storageUsedPercent.toFixed(1)}%
-                </span>
-              </div>
-              <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
-                <div
-                  className="bg-indigo-600 h-full rounded-full transition-all duration-500"
-                  style={{ width: `${storageUsedPercent}%` }}
-                />
-              </div>
-            </div>
-            
-            <div className="space-y-2 text-sm">
+            <div className="space-y-3">
               <div className="flex justify-between">
-                <span className="text-gray-600">Available</span>
-                <span className="font-medium text-gray-900">
-                  {formatFileSize(device.availableStorageBytes)}
+                <span className="text-sm text-gray-600">Chunks Received</span>
+                <span className="text-sm font-medium text-gray-900">
+                  {metrics.chunksReceived}
                 </span>
               </div>
+              
               <div className="flex justify-between">
-                <span className="text-gray-600">In Use</span>
-                <span className="font-medium text-indigo-600">
-                  {formatFileSize(storageUsedBytes)}
+                <span className="text-sm text-gray-600">Chunks Sent</span>
+                <span className="text-sm font-medium text-gray-900">
+                  {metrics.chunksSent}
+                </span>
+              </div>
+              
+              <div className="flex justify-between">
+                <span className="text-sm text-gray-600">Average Latency</span>
+                <span className="text-sm font-medium text-gray-900">
+                  {latency > 0 ? `${latency}ms` : '--'}
+                </span>
+              </div>
+              
+              <div className="flex justify-between">
+                <span className="text-sm text-gray-600">Session Uptime</span>
+                <span className="text-sm font-medium text-gray-900">
+                  {formatUptime(uptime)}
                 </span>
               </div>
             </div>
           </div>
           
           {/* Earnings */}
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex items-center justify-between mb-4">
+          <div className="bg-white rounded-lg shadow-sm p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <DollarSign className="w-5 h-5 text-green-600" />
               <h3 className="text-lg font-semibold text-gray-900">Earnings</h3>
-              <TrendingUp className="w-5 h-5 text-green-500" />
             </div>
             
-            <div className="mb-6">
-              <div className="text-sm text-gray-600 mb-2">This Session</div>
-              <div className="text-4xl font-bold text-green-600">
-                {formatCurrency(sessionEarnings)}
-              </div>
-              <div className="text-xs text-gray-500 mt-1">
-                Uptime: {uptimeHours}h {uptimeMinutes}m {uptimeSeconds}s
-              </div>
-            </div>
-            
-            <div className="space-y-2 text-sm">
+            <div className="space-y-3">
               <div className="flex justify-between">
-                <span className="text-gray-600">Rate per hour</span>
-                <span className="font-medium text-gray-900">
-                  {formatCurrency(earningsPerHour)}/hr
+                <span className="text-sm text-gray-600">Session Earnings</span>
+                <span className="text-sm font-medium text-gray-900">
+                  ${metrics.sessionEarnings.toFixed(4)}
                 </span>
               </div>
+              
               <div className="flex justify-between">
-                <span className="text-gray-600">Total earnings</span>
-                <span className="font-medium text-green-600">
-                  {formatCurrency(device.totalEarnings)}
+                <span className="text-sm text-gray-600">Total Earnings</span>
+                <span className="text-sm font-medium text-gray-900">
+                  ${device.totalEarnings.toFixed(2)}
                 </span>
               </div>
-            </div>
-          </div>
-        </div>
-        
-        {/* Activity Metrics */}
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold text-gray-900">Activity</h3>
-            <div className="flex items-center gap-4 text-sm">
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={autoRefresh}
-                  onChange={(e) => setAutoRefresh(e.target.checked)}
-                  className="rounded"
-                />
-                <span className="text-gray-600">Auto-refresh</span>
-              </label>
-              <button
-                onClick={() => loadChunks()}
-                className="flex items-center gap-1 text-indigo-600 hover:text-indigo-700"
-              >
-                <RefreshCw className="w-4 h-4" />
-                Refresh
-              </button>
-            </div>
-          </div>
-          
-          <div className="grid grid-cols-3 gap-4">
-            <div className="text-center p-4 bg-gray-50 rounded-lg">
-              <div className="text-2xl font-bold text-gray-900">{metrics.chunksReceived}</div>
-              <div className="text-sm text-gray-600">Chunks Received</div>
-            </div>
-            <div className="text-center p-4 bg-gray-50 rounded-lg">
-              <div className="text-2xl font-bold text-gray-900">{metrics.chunksSent}</div>
-              <div className="text-sm text-gray-600">Chunks Sent</div>
-            </div>
-            <div className="text-center p-4 bg-gray-50 rounded-lg">
-              <div className="text-2xl font-bold text-gray-900">{metrics.avgLatency.toFixed(0)}ms</div>
-              <div className="text-sm text-gray-600">Avg Latency</div>
+              
+              <div className="flex justify-between">
+                <span className="text-sm text-gray-600">Hourly Rate</span>
+                <span className="text-sm font-medium text-gray-900">
+                  ${(metrics.sessionEarnings / (uptime / 3600) || 0).toFixed(4)}/hr
+                </span>
+              </div>
             </div>
           </div>
         </div>
         
         {/* Chunks List */}
-        <div className="bg-white rounded-lg shadow">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900">Stored Chunks</h3>
-                <p className="text-sm text-gray-500 mt-1">
-                  {chunks.length} chunks • Updates every 5 seconds
-                </p>
-              </div>
-              <Package className="w-5 h-5 text-gray-400" />
+        <div className="bg-white rounded-lg shadow-sm p-6">
+          <div className="flex justify-between items-center mb-4">
+            <div className="flex items-center gap-3">
+              <HardDrive className="w-5 h-5 text-indigo-600" />
+              <h3 className="text-lg font-semibold text-gray-900">
+                Stored Chunks ({chunks.length})
+              </h3>
+              {autoRefresh && !circuitBreakerOpen && (
+                <span className="text-xs text-gray-500">• Updates every 5s</span>
+              )}
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-2 text-sm text-gray-600">
+                <input
+                  type="checkbox"
+                  checked={autoRefresh}
+                  onChange={(e) => setAutoRefresh(e.target.checked)}
+                  disabled={circuitBreakerOpen}
+                  className="rounded"
+                />
+                Auto-refresh
+              </label>
+              
+              <button
+                onClick={handleManualRefresh}
+                disabled={chunksLoading || circuitBreakerOpen}
+                className="flex items-center gap-2 px-3 py-1 text-sm bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <RefreshCw className={`w-4 h-4 ${chunksLoading ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
             </div>
           </div>
           
+          {/* Chunks Error (not circuit breaker) */}
+          {chunksError && !circuitBreakerOpen && (
+            <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-yellow-600 mt-0.5" />
+                <div className="flex-1">
+                  <p className="text-sm text-yellow-800">{chunksError}</p>
+                  <p className="text-xs text-yellow-700 mt-1">
+                    Retrying... (attempt {retryCount}/{maxRetries})
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+          
+          {/* Chunks List */}
           {chunks.length === 0 ? (
-            <div className="p-12 text-center text-gray-500">
-              <Package className="mx-auto h-12 w-12 text-gray-300 mb-4" />
-              <p className="font-medium">No chunks stored yet</p>
-              <p className="text-sm mt-2">
-                {isConnected 
-                  ? 'Keep your device online to start receiving chunks'
-                  : 'Connect your device to start receiving chunks'
-                }
+            <div className="text-center py-12">
+              <HardDrive className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+              <p className="text-gray-600">No chunks stored yet</p>
+              <p className="text-sm text-gray-500 mt-1">
+                Chunks will appear here when companies upload files
               </p>
             </div>
           ) : (
-            <div className="divide-y divide-gray-200 max-h-96 overflow-y-auto">
+            <div className="space-y-2 max-h-96 overflow-y-auto">
               {chunks.map((chunk) => (
-                <div key={chunk.id} className="px-6 py-4 hover:bg-gray-50 transition">
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center shrink-0">
-                          <Package className="w-5 h-5 text-indigo-600" />
-                        </div>
-                        <div className="min-w-0">
-                          <h4 className="text-sm font-medium text-gray-900 truncate">
-                            Chunk {chunk.chunkId.substring(0, 12)}...
-                          </h4>
-                          <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
-                            <span>Stored {formatRelativeTime(chunk.createdAt)}</span>
-                            <span>•</span>
-                            <span className={`flex items-center gap-1 ${
-                              chunk.isHealthy ? 'text-green-600' : 'text-red-600'
-                            }`}>
-                              <Circle className={`w-2 h-2 ${
-                                chunk.isHealthy ? 'fill-green-500' : 'fill-red-500'
-                              }`} />
-                              {chunk.isHealthy ? 'Healthy' : 'Unhealthy'}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
+                <div
+                  key={chunk.id}
+                  className="flex justify-between items-center p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition"
+                >
+                  <div className="flex items-center gap-3">
+                    {chunk.isHealthy ? (
+                      <CheckCircle className="w-5 h-5 text-green-500" />
+                    ) : (
+                      <XCircle className="w-5 h-5 text-red-500" />
+                    )}
                     
-                    <div className="text-right ml-4">
-                      <div className="text-sm font-medium text-gray-900 truncate max-w-xs">
-                        {chunk.localPath}
-                      </div>
-                      {chunk.lastVerified && (
-                        <div className="text-xs text-gray-500 mt-1">
-                          Verified {formatRelativeTime(chunk.lastVerified)}
-                        </div>
-                      )}
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">
+                        Chunk {chunk.id.substring(0, 8)}...
+                      </p>
+                      <p className="text-xs text-gray-600">
+                        {(chunk.sizeBytes / 1024).toFixed(2)} KB
+                      </p>
                     </div>
+                  </div>
+                  
+                  <div className="text-right">
+                    <p className={`text-xs font-medium ${
+                      chunk.isHealthy ? 'text-green-600' : 'text-red-600'
+                    }`}>
+                      {chunk.isHealthy ? 'Healthy' : 'Unhealthy'}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {new Date(chunk.createdAt).toLocaleTimeString()}
+                    </p>
                   </div>
                 </div>
               ))}
             </div>
           )}
         </div>
-        
-        {/* Status Bar */}
-        <div className={`mt-6 rounded-lg p-4 border-2 ${
-          isConnected 
-            ? 'bg-green-50 border-green-200' 
-            : 'bg-red-50 border-red-200'
-        }`}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Activity className={`w-5 h-5 ${
-                isConnected ? 'text-green-600' : 'text-red-600'
-              }`} />
-              <div>
-                <div className={`text-sm font-medium ${
-                  isConnected ? 'text-green-900' : 'text-red-900'
-                }`}>
-                  {isConnected ? 'Device is online and earning' : 'Device is offline'}
-                </div>
-                <div className={`text-xs ${
-                  isConnected ? 'text-green-700' : 'text-red-700'
-                }`}>
-                  {isConnected 
-                    ? 'Keep this tab open to continue earning' 
-                    : 'Reconnect to start earning again'
-                  }
-                </div>
-              </div>
-            </div>
-            <div className={`text-sm ${
-              isConnected ? 'text-green-600' : 'text-red-600'
-            }`}>
-              {currentTime.toLocaleTimeString()}
-            </div>
-          </div>
-        </div>
       </main>
+      
+      {/* Status Bar */}
+      <div className={`fixed bottom-0 left-0 right-0 py-2 px-4 text-center text-sm ${
+        isConnected ? 'bg-green-600' : 'bg-red-600'
+      } text-white`}>
+        {isConnected ? (
+          <span>● Device is online and earning • Keep this tab open • {formatUptime(uptime)}</span>
+        ) : (
+          <span>● Device is offline • Reconnect to start earning again</span>
+        )}
+      </div>
     </div>
   );
 }

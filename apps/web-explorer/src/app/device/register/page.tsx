@@ -6,18 +6,17 @@ import { useAuthStore } from '@/store/authStore';
 import { useDeviceStore } from '@/store/deviceStore';
 import { useToast } from '@/contexts/ToastContext';
 import { deviceAPI } from '@/lib/api';
-import { Wifi, WifiOff, LogOut, Loader2, CheckCircle, Info } from 'lucide-react';
+import { Wifi, WifiOff, LogOut, Loader2, CheckCircle, Info, AlertCircle } from 'lucide-react';
 
 /**
- * OPTIMIZED Device Registration Page
+ * FIXED Device Registration Page
  * 
- * IMPROVEMENTS:
- * 1. Single-step registration (no confusing multi-step)
- * 2. Clear connection status indicator
- * 3. Logout option always visible
- * 4. Auto-connect after registration
- * 5. Real-time feedback on each step
- * 6. Error recovery options
+ * CRITICAL FIXES:
+ * 1. ✅ Generate deviceId ONCE and store it
+ * 2. ✅ Use SAME deviceId for REST and WebSocket
+ * 3. ✅ Check JWT token before registration
+ * 4. ✅ Handle 401 errors properly
+ * 5. ✅ Add detailed error logging
  */
 
 export default function DeviceRegisterPage() {
@@ -28,7 +27,6 @@ export default function DeviceRegisterPage() {
   
   // Device
   const {
-    device,
     isRegistered,
     isConnected,
     connectionError,
@@ -39,10 +37,28 @@ export default function DeviceRegisterPage() {
   const toast = useToast();
   
   // Local state
-  const [deviceName, setDeviceName] = useState('');
   const [storageGB, setStorageGB] = useState(10);
   const [step, setStep] = useState<'configure' | 'registering' | 'connecting' | 'complete'>('configure');
   const [error, setError] = useState('');
+
+  // Give the device a name
+  const [deviceName, setDeviceName] = useState(() => {
+    // Are we in the browser
+    if (typeof window === 'undefined') return '';
+
+    // Which browser is it?
+    const ua = navigator.userAgent;
+    const browserInfo =
+      ua.includes('Chrome') ? 'Chrome' :
+      ua.includes('Firefox') ? 'Firefox' :
+      ua.includes('Safari') ? 'Safari' : 'Browser';
+
+    return `My ${browserInfo} Device`;
+  });
+  
+
+  // Store generated deviceId in state
+  const [generatedDeviceId, setGeneratedDeviceId] = useState<string>('');
   
   // Redirect if not authenticated
   useEffect(() => {
@@ -58,17 +74,7 @@ export default function DeviceRegisterPage() {
     }
   }, [isRegistered, isConnected, router]);
   
-  // Set default device name
-  useEffect(() => {
-    if (!deviceName) {
-      const browserInfo =
-        navigator.userAgent.includes('Chrome') ? 'Chrome' :
-        navigator.userAgent.includes('Firefox') ? 'Firefox' :
-        navigator.userAgent.includes('Safari') ? 'Safari' : 'Browser';
-      
-      setDeviceName(`My ${browserInfo} Device`);
-    }
-  }, []);
+  
   
   // Handle logout
   const handleLogout = async () => {
@@ -78,10 +84,11 @@ export default function DeviceRegisterPage() {
       router.push('/login');
     } catch (error) {
       toast.error('Logout failed');
+      console.log(error);
     }
   };
   
-  // Handle registration (single button!)
+  // FIXED: Handle registration with proper device ID management
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -92,49 +99,96 @@ export default function DeviceRegisterPage() {
     
     setError('');
     
+    // CRITICAL FIX: Check JWT token exists
+    const jwt = localStorage.getItem('accessToken');
+    if (!jwt) {
+      setError('No authentication token found. Please login again.');
+      toast.error('Session expired. Please login again.');
+      setTimeout(() => router.push('/login'), 2000);
+      return;
+    }
+    
+    console.log('🔍 DEBUG: Starting registration...');
+    console.log('🔍 User ID:', user.id);
+    console.log('🔍 JWT exists:', !!jwt);
+    console.log('🔍 JWT length:', jwt.length);
+    
     try {
-      // STEP 1: Register device via REST API
-      setStep('registering');
-      
+      // CRITICAL FIX: Generate deviceId ONCE and store it
       const deviceId = `web-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      setGeneratedDeviceId(deviceId);
+      
+      console.log('🔍 Generated Device ID:', deviceId);
+      
       const storageBytes = storageGB * 1024 * 1024 * 1024;
+      
+      // ============================================
+      // STEP 1: Register device via REST API
+      // ============================================
+      setStep('registering');
+      console.log('📝 Step 1: Registering device via REST API...');
       
       const response = await deviceAPI.register({
         deviceId,
         deviceType: 'DESKTOP',
         totalStorageBytes: storageBytes,
       });
-
-    console.log(response);
       
+      console.log('✅ REST registration response:', response);
       toast.success('Device registered successfully!');
       
-      // Update local store
-      await registerDevice(deviceName, storageBytes, user.id);
+      // CRITICAL FIX: Update deviceStore with the SAME deviceId
+      // Pass the deviceId we just registered
+      await registerDevice(deviceName, storageBytes, user.id, deviceId);
       
-      // STEP 2: Connect WebSocket automatically
+      console.log('✅ Device store updated with deviceId:', deviceId);
+      
+      // ============================================
+      // STEP 2: Connect WebSocket with SAME deviceId
+      // ============================================
       setStep('connecting');
+      console.log('📡 Step 2: Connecting WebSocket...');
+      console.log('📡 Using Device ID:', deviceId);
+      console.log('📡 Using JWT:', jwt.substring(0, 20) + '...');
       
-      const jwt = localStorage.getItem('accessToken');
-      if (!jwt) {
-        throw new Error('No JWT token found');
-      }
+      // CRITICAL FIX: Pass deviceId to connectSocket
+      await connectSocket(jwt, deviceId);
       
-      await connectSocket(jwt);
-      
+      console.log('✅ WebSocket connected successfully');
       toast.success('Device connected to network!');
       
+      // ============================================
       // STEP 3: Complete - redirect to dashboard
+      // ============================================
       setStep('complete');
+      console.log('🎉 Registration complete!');
       
       setTimeout(() => {
         router.push('/device/dashboard');
       }, 1000);
       
     } catch (err: any) {
-      setError(err.message || 'Registration failed');
+      console.error('❌ Registration failed:', err);
+      console.error('❌ Error details:', {
+        message: err.message,
+        response: err.response?.data,
+        status: err.response?.status,
+      });
+      
+      // Handle specific error codes
+      if (err.response?.status === 401) {
+        setError('Authentication failed. Your session may have expired. Please login again.');
+        toast.error('Session expired. Please login again.');
+        setTimeout(() => router.push('/login'), 2000);
+      } else if (err.response?.status === 400) {
+        setError(err.response?.data?.error || 'Invalid device configuration');
+        toast.error(err.response?.data?.error || 'Registration failed');
+      } else {
+        setError(err.message || 'Registration failed. Please try again.');
+        toast.error(err.message || 'Registration failed');
+      }
+      
       setStep('configure');
-      toast.error(err.message || 'Registration failed');
     }
   };
   
@@ -211,7 +265,13 @@ export default function DeviceRegisterPage() {
           
           {error && (
             <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-              <p className="text-sm text-red-800">{error}</p>
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 shrink-0" />
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-red-800">Registration Failed</p>
+                  <p className="text-sm text-red-700 mt-1">{error}</p>
+                </div>
+              </div>
             </div>
           )}
           
@@ -221,6 +281,14 @@ export default function DeviceRegisterPage() {
           >
             Register & Connect Device
           </button>
+          
+          {/* Debug Info (remove in production) */}
+          <div className="bg-gray-50 border border-gray-200 rounded p-3 text-xs text-gray-600">
+            <p className="font-medium mb-1">Debug Info:</p>
+            <p>User ID: {user?.id}</p>
+            <p>Email: {user?.email}</p>
+            <p>JWT: {localStorage.getItem('accessToken') ? '✓ Present' : '✗ Missing'}</p>
+          </div>
         </form>
       );
     }
@@ -243,9 +311,13 @@ export default function DeviceRegisterPage() {
               <CheckCircle className="w-5 h-5 text-green-600" />
             )}
             
+            
             <div className="flex-1">
               <p className="font-medium text-gray-900">Registering Device</p>
               <p className="text-sm text-gray-600">Creating device on server...</p>
+              {generatedDeviceId && (
+                <p className="text-xs text-gray-500 mt-1">ID: {generatedDeviceId}</p>
+              )}
             </div>
           </div>
           
@@ -261,7 +333,7 @@ export default function DeviceRegisterPage() {
             {step === 'complete' && (
               <CheckCircle className="w-5 h-5 text-green-600" />
             )}
-            {(step === 'registering') && (
+            {( step === 'registering') && (
               <div className="w-5 h-5 rounded-full border-2 border-gray-300" />
             )}
             
@@ -291,10 +363,16 @@ export default function DeviceRegisterPage() {
         
         {connectionError && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-            <p className="text-sm text-red-800">{connectionError}</p>
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-red-600 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-sm font-medium text-red-800">Connection Error</p>
+                <p className="text-sm text-red-700 mt-1">{connectionError}</p>
+              </div>
+            </div>
             <button
               onClick={() => setStep('configure')}
-              className="mt-2 text-sm text-red-600 hover:text-red-700 font-medium"
+              className="mt-3 text-sm text-red-600 hover:text-red-700 font-medium"
             >
               ← Try Again
             </button>

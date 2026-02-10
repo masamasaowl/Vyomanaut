@@ -121,6 +121,7 @@ export interface Device {
   deviceId: string;
   deviceType: DeviceType;
   userId: string;
+  name:string
   
   totalStorageBytes: number;
   availableStorageBytes: number;

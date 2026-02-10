@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { DeviceSocketManager, socketManager } from '@/lib/socket';
-import type { Device, ChunkLocation, StoredChunk } from '@/types';
+import type { Device, StoredChunk } from '@/types';
 import { chunkStorageService } from '@/services/chunkStorage';
 
 
@@ -13,32 +13,44 @@ interface DeviceState {
   // Connection status
   isConnected: boolean;
   connectionError: string | null;
+  latency: number;
   
   // Chunks stored on this device
-  chunks: ChunkLocation[];
-  loadingChunks: boolean;
+  chunks: StoredChunk[];
+  chunksLoading: boolean;
+  chunksError: string | null;
   
   // Performance metrics
   metrics: {
     chunksReceived: number;
     chunksSent: number;
-    avgLatency: number;
-    lastUpdate: Date;
+    bytesStored: number;
+    sessionEarnings: number;
+    uptimeSeconds: number;
   };
 
+  retryCount: number;
+  maxRetries: number;
+
   // 3 Actions
-  connectSocket: (jwt: string) => Promise<void>;
   registerDevice: (
-    deviceName: string,
+    name: string,
     storageBytes: number,
-    userId: string
+    userId: string,
+    deviceId: string
   ) => Promise<void>;
+
+  connectSocket: (
+    jwt: string,
+    deviceId: string
+  ) => Promise<void>;
+  
   disconnectSocket: () => void;
   
   // Chunk management
   loadChunks: () => Promise<void>;
-  refreshChunks: () => Promise<void>;
-  updateChunkHealth: (chunkId: string, isHealthy: boolean) => void;
+  updateMetrics: () => void;
+  resetRetryCount: () => void;
 }
 
 
@@ -57,21 +69,68 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
   device: null,
   isRegistered: false,
   isConnected: false,
+
   connectionError: null,
+  latency: 0,
+  
   chunks: [],
-  loadingChunks: false,
+  chunksLoading: false,
+  chunksError: null,
+  
   metrics: {
     chunksReceived: 0,
     chunksSent: 0,
-    avgLatency: 0,
-    lastUpdate: new Date()
+    bytesStored: 0,
+    sessionEarnings: 0,
+    uptimeSeconds: 0,
   },
-  
+  // Fix unending fetch reloads
+  retryCount: 0,
+  maxRetries: 3,
 
   // =================================================
   // Part 2: The Functions of the store 
   // ================================================
 
+
+  /**
+   * Update device state after device registers through HTTP
+   * 
+   * Registration only takes place through REST API
+   * We update the state in the store as the device registers after making a request to the server
+   */
+  registerDevice: async (name: string, storageBytes: number, userId: string, deviceId: string) => {
+    console.log('📝 Registering the device:', deviceId);
+
+    // Save the device details in the state
+    const newDevice: Device = {
+      id: deviceId, 
+      deviceId,
+      deviceType: 'DESKTOP',
+      userId,
+      name,
+      totalStorageBytes: storageBytes,
+      availableStorageBytes: storageBytes,
+      status: 'OFFLINE',
+      lastSeenAt: new Date(),
+      reliabilityScore: 100,
+      totalEarnings: 0,
+      pendingEarnings: 0,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    
+    console.log('✅ DeviceStore: Device object created:', newDevice);
+
+    set({
+      device: newDevice,
+      isRegistered: true,
+      connectionError: null,
+      retryCount: 0, // Reset retry count
+    });
+
+    console.log('✅ DeviceStore: State updated');
+  },
 
    
   /**
@@ -86,19 +145,24 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
    *    to server
    * 5. Track latency of this setup      
    */ 
-  connectSocket: async (jwt: string) => {
+  connectSocket: async (jwt: string, deviceId: string) => {
     try {
 
       // 1. Reset errors before we try again    
       set({ connectionError: null });
 
       // 2. Fetch the entire store
-      const state = get();
+      const { device } = get();
 
       // 3. If device is not present -> it hasn't been registered in the server
-      if (!state.device) {
+      if (!device) {
         throw new Error('Device not registered. Register first via REST API.');
       }
+      if (device.deviceId !== deviceId) {
+      console.error('❌ DeviceStore: Device ID mismatch!');
+      console.error('  Store has:', device.deviceId);
+      console.error('  Trying to connect:', deviceId);
+    }
 
 
       // 4. Create socket manager for this device
@@ -106,7 +170,7 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
       ({
 
         // These are the configuration options we defined at start of socket.ts
-        deviceId: state.device.deviceId,
+        deviceId: device.deviceId,
         jwt,
 
         // 5. We simply fill up the empty boxes declared there 
@@ -114,21 +178,40 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
 
         // i. 'connect' event
         onConnected: () => {
-          set({ isConnected: true, connectionError: null });
+          set({ 
+            isConnected: true,
+            connectionError: null,
+            device: {
+              ...device,
+              status: 'ONLINE',
+            },
+          });
+
+          // Start loading chunks
+          get().loadChunks();
         },
+
 
         // ii. 'disconnect' event 
         onDisconnected: () => {
-          set({ isConnected: false });
+          set({
+            isConnected: false,
+            device: device ? {
+              ...device,
+              status: 'OFFLINE',
+            } : null,
+          });
         },
 
         // iii. 'error' event 
         onError: (error: any) => {
-          set({ connectionError: error.message });
+          set({
+            connectionError: error,
+            isConnected: false,
+          });
         }
       });
       // === Configuration complete ===
-
       
       // 6. We continue filling the boxes now for the device-server specific events
 
@@ -173,7 +256,7 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
           }));
 
           // Refresh chunk list
-          await get().refreshChunks();
+          await get().loadChunks();
           
           // Confirm to backend
           socketManager.confirmChunkStorage(storedChunk.id, true);
@@ -252,7 +335,7 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
           await chunkStorageService.deleteChunk(chunkId, device.deviceId);
           
           // Refresh chunk list
-          await get().refreshChunks();
+          await get().loadChunks();
           
           // Confirm to backend
           socketManager.confirmChunkDeletion(chunkId, true);
@@ -298,35 +381,7 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
   },
   
 
-  /**
-   * Update device state after device registers through HTTP
-   * 
-   * Registration only takes place through REST API
-   * We update the state in the store as the device registers after making a request to the server
-   */
-  registerDevice: async (deviceName: string, storageBytes: number, userId: string) => {
-
-    
-    const deviceId = `web-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    
-    const device: Device = {
-      id: deviceId, // Will be replaced by DB id, only exists to for type declaration 
-      deviceId,
-      deviceType: 'DESKTOP',
-      userId,
-      totalStorageBytes: storageBytes,
-      availableStorageBytes: storageBytes,
-      status: 'OFFLINE',
-      lastSeenAt: new Date(),
-      reliabilityScore: 100,
-      totalEarnings: 0,
-      pendingEarnings: 0,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    
-    set({ device, isRegistered: true });
-  },
+  
 
   /**
    * Update state after disconnect from WebSocket
@@ -335,10 +390,15 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
     // Disconnect
     socketManager.disconnect();
     // Update state
-    set({ isConnected: false, device: null, isRegistered: false });
+    set({
+      isConnected: false,
+      device: get().device ? {
+        ...get().device!,
+        status: 'OFFLINE',
+      } : null,
+    });
   },
   
-
   
   /**
    * Load chunks from PostgreSQL
@@ -346,55 +406,92 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
   loadChunks: async () => {
 
     // Make sure the device is registered
-    const device = get().device;
+    const { device, chunksLoading, retryCount, maxRetries } = get();
+
     if (!device) return;
+
+    // Stop trying to load multiple chunks
+    if (retryCount >= maxRetries) {
+      console.error('🚫 DeviceStore: Max retries reached, stopping chunk loading');
+      set({
+        chunksError: `Failed to load chunks after ${maxRetries} attempts. Device may not be properly registered.`,
+        chunksLoading: false,
+      });
+      return;
+    }
+
+    // Prevent concurrent loads
+    if (chunksLoading) {
+      console.log('⏸️ DeviceStore: Chunk loading already in progress');
+      return;
+    }
     
     // We are fetching the chunk details for the device
-    set({ loadingChunks: true });
+    set({ chunksLoading: true, chunksError: null });
     
     try {
       // Make a Read all request to DB
       const chunks = await chunkStorageService.getDeviceChunks(device.deviceId);
       
       // Update available storage based on chunks
-      const usedStorage = chunks.reduce((sum, c) => sum + c.sizeBytes, 0);
-      const availableStorage = device.totalStorageBytes - usedStorage;
+      const bytesStored = chunks.reduce((sum, c) => sum + c.sizeBytes, 0);
       
       // Work done! we update the states
       set({
         chunks,
-        loadingChunks: false,
-        device: {
-          ...device,
-          availableStorageBytes: availableStorage,
-        },
+        chunksLoading: false,
+        chunksError: null,
+        retryCount: 0, // Reset on success
+        metrics: {
+          ...get().metrics,
+          chunksReceived: chunks.length,
+          bytesStored,
+        },  
       });
       
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Failed to load chunks:', error);
-      set({ loadingChunks: false });
+      const newRetryCount = retryCount + 1;
+      
+      set({
+        chunksLoading: false,
+        chunksError: error?.message,
+        retryCount: newRetryCount,
+      });
     }
   },
-  
-  /**
-   * Refresh chunks from PostgreSQL
-   * Called after chunk add/remove operations
-   */
-  refreshChunks: async () => {
-    await get().loadChunks();
-  },
-  
-  
-  /**
-   * Update chunk health status
-   */
-  updateChunkHealth: (chunkId: string, isHealthy: boolean) => {
-    set((state) => ({
-      chunks: state.chunks.map(c =>
-        c.chunkId === chunkId ? { ...c, isHealthy, lastVerified: new Date() } : c
-      ),
-    }));
-  },
 
+   // ============================================
+  // Reset Retry Count
+  // ============================================
+  resetRetryCount: () => {
+    console.log('🔄 DeviceStore: Resetting retry count');
+    set({ retryCount: 0, chunksError: null });
+  },
+  
+  // ============================================
+  // Update Metrics
+  // ============================================
+  updateMetrics: () => {
+    const { device, chunks } = get();
+    
+    if (!device) return;
+    
+    const bytesStored = chunks.reduce((total, chunk) => total + chunk.sizeBytes, 0);
+    
+    // Calculate earnings (example: $0.001 per GB per hour)
+    const gbStored = bytesStored / (1024 * 1024 * 1024);
+    const uptimeHours = get().metrics.uptimeSeconds / 3600;
+    const sessionEarnings = gbStored * uptimeHours * 0.001;
+    
+    set({
+      metrics: {
+        ...get().metrics,
+        bytesStored,
+        sessionEarnings,
+        uptimeSeconds: get().metrics.uptimeSeconds + 1,
+      },
+    });
+  },
 
 }));
